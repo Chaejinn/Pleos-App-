@@ -33,7 +33,7 @@ test-data/               Android와 무관한 공통 fixture
 docs/                    개발 기준과 검증 기록
 ```
 
-이 구조는 생성할 파일의 기준이다. 현재 존재하는 앱 소스 구조를 설명하는 것은 아니다. `com.pleos.explorer`는 내부 개발용 네임스페이스이며, 배포용 applicationId 확정을 의미하지 않는다.
+이 구조는 신규 구현의 기준이다. 2026-11-11에 역할별 파일 분리를 반영했으며, 실제 파일·미구현 영역은 [현재 코드 구조](ARCHITECTURE.md)를 따른다. 기존 데모 코드는 각 역할 디렉터리의 `legacy`에 격리한다. `com.pleos.explorer`는 내부 개발용 네임스페이스이며, 배포용 applicationId 확정을 의미하지 않는다.
 
 - `app → domain`만 허용한다. `domain → app`과 순환 참조는 금지한다.
 - `domain`은 Kotlin/JVM과 coroutines만 사용한다. Android, Room, Compose, Pleos 클래스와 애너테이션은 가져오지 않는다.

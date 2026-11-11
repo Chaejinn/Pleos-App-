@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">로드로그</string>
+    <string name="notification_running">주행을 기록하고 있어요</string>
+    <string name="no_trip">아직 주행 기록이 없어요</string>
+    <string name="start_drive">주행 시작</string>
+    <string name="demo_rough">데모 주행 1</string>
+    <string name="demo_smooth">데모 주행 2</string>
+    <string name="location_required">주행 기록을 시작하려면 위치 권한을 허용해 주세요.</string>
+    <string name="vehicle_environment_required">차량 주행은 Pleos Connect 에뮬레이터에서 시작해 주세요.</string>
+    <string name="service_start_failed">주행을 시작하지 못했어요. 앱을 다시 열고 시도해 주세요.</string>
+    <string name="stop_demo">데모 종료 / 출발 전 연결 취소</string>
+</resources>

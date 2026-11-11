@@ -1,0 +1,39 @@
+[versions]
+agp = "8.5.2"
+kotlin = "2.0.21"
+core = "1.13.1"
+appcompat = "1.7.0"
+activity = "1.9.2"
+lifecycle = "2.8.6"
+compose-bom = "2024.09.03"
+coroutines = "1.8.1"
+junit = "4.13.2"
+robolectric = "4.14.1"
+vehicle = "2.3.2"
+navi = "3.0.5"
+fused = "1.1.3"
+tts = "3.3.1"
+
+[libraries]
+androidx-core = { module = "androidx.core:core-ktx", version.ref = "core" }
+androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+junit = { module = "junit:junit", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+pleos-vehicle = { module = "ai.pleos.playground:Vehicle", version.ref = "vehicle" }
+pleos-navi = { module = "ai.pleos.playground:NaviHelper", version.ref = "navi" }
+pleos-fused = { module = "ai.pleos.playground:FusedLocation", version.ref = "fused" }
+pleos-tts = { module = "ai.pleos.playground:TextToSpeech", version.ref = "tts" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

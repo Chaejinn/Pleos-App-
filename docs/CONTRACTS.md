@@ -128,7 +128,13 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `DriveStore` | `suspend loadSnapshot(): DriveSnapshot`, `suspend commit(changeSet: DriveChangeSet): CommitOutcome` | 채진 |
 | `ArchiveRepository` | `observeTrips(): Flow<List<Trip>>`, `suspend getTripDetail(tripId): TripDetail?`, `suspend deleteTrip(tripId)`, `suspend deleteAll()` | 채진 |
 | `RewardRepository` | `observePending(): Flow<List<PendingReward>>`, `suspend acknowledge(id, atMs)` | 채진 |
-| `SettingsRepository` | 동의·TTS 설정 조회 Flow, 설정 저장 suspend | 채진 |
+| `SettingsRepository` | `settings: StateFlow<UserSettings>`, `suspend setRecordingConsent(granted: Boolean)`, `suspend setTtsEnabled(enabled: Boolean)` | 채진 |
+
+설정 계약 구현(2026-11-11): `UserSettings(recordingConsentGranted: Boolean = false, ttsEnabled: Boolean = false)`.
+두 필드는 독립적이다. 동의 철회는 수집·발화를 중단하지만 음성 선호와 기존 기록은 보존한다.
+기록 전체 삭제도 두 설정을 보존한다. 저장 성공 후 관측 상태를 갱신하며 저장 실패를 호출자에게 전달한다.
+현재 앱의 구현은 SharedPreferences이며, Room 기반 사용자 주행 데이터와 분리한다.
+이 설정 계약 구현이 다른 포트·엔진의 구현 완료를 뜻하지 않는다.
 
 API 인자 타입은 point=`GeoPoint`, gridKeys=`Set<String>`, tripId/id=`String`, atMs=`Long`으로 통일한다. `RegionDefinition`은 데이터 규격의 code·name·provinceCode·representativePoint·geometry·bbox를 가진다. `TripDetail`은 Trip, 방문 지역, 획득 보상, 지표, 고스트 결과를 조합한 읽기 모델이다.
 
