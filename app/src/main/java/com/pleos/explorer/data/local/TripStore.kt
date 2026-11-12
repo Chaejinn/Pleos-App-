@@ -20,6 +20,12 @@ class TripStore(context: Context) {
 
     fun add(trip: Trip) {
         val trips = (all() + trip).takeLast(30)
+        write(trips)
+    }
+
+    fun delete(id: String) = write(all().filterNot { it.id == id })
+
+    private fun write(trips: List<Trip>) {
         file.writeText(JSONArray(trips.map { toJson(it) }).toString())
     }
 

@@ -15,6 +15,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -43,6 +44,14 @@ fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () 
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var confirmDeletion by rememberSaveable { mutableStateOf(false) }
     val restricted = drive.running
+    var wasRunning by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(drive.running, drive.finishing, settings.recordingConsentGranted) {
+        if (drive.running) wasRunning = true
+        else if (wasRunning && !drive.finishing) {
+            wasRunning = false
+            if (settings.recordingConsentGranted) { tab = 2; showSettings = false }
+        }
+    }
 
     MaterialTheme {
         if (confirmDeletion && !restricted) AlertDialog(
@@ -90,7 +99,7 @@ fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () 
                     when (tab) {
                         0 -> MapScreen(drive.message, !drive.finishing && !drive.deleting, onStartDrive)
                         1 -> CollectionScreen(report.collection)
-                        2 -> ArchiveScreen(report.trip)
+                        2 -> ArchiveScreen(report.trips, !drive.finishing && !drive.deleting, model::deleteTrip)
                     }
                     ActionButton("설정", onClick = { showSettings = true })
                 }

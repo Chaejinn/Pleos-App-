@@ -81,3 +81,12 @@ debug APK 빌드 성공, lint 오류 0개·경고 32개. 경고는 고정 버전
 6. 데스크톱: SDK 지원 확인·Virtual Console DDS 문제·화면 상태·서비스 지속성·시연 검증.
 
 `legacy`는 새 계약 완료를 뜻하지 않는다. 신규 도메인 코드에서 legacy 모델을 공통 계약처럼 사용하지 않는다.
+
+## Windows 검증 및 첫 보완 (2026-11-12)
+
+- origin fetch 후 확인한 원격 브랜치: main, docs/team-conventions, feature/app-integration. 새 domain 구현 브랜치는 관측되지 않음. 기존 공통 모델을 임의로 중복 정의하지 않음.
+- 사용자 PC: JDK 17.0.2 적용 후 Gradle sync 및 assembleDebug 성공. 일반 API 37 전화 에뮬레이터에 adb 설치·ReportActivity 실행 성공. Pleos 차량 신호 검증은 아님.
+- 기존 데모 아카이브에 최근순 목록·선택 상세·확인 후 개별 삭제 추가. 수집 명소는 유지.
+- 주행 종료 뒤 기록 탭으로 전환. 파일 저장 방식은 기존 JSON을 유지하며 Room 전환은 별도 작업.
+- 기존 JSON에는 종료 시각·정밀 거리·실제 신호 지원 정보가 없어 표시값을 추정하지 않음. 화면에 기존 데모 집계임을 표시.
+- 남은 작업: 공통 계약 구현 수령·통합, Room transaction 및 보상 큐, 승인 위치 경로, 실제 지도 공급자 검증, 지역 카탈로그 연결, Pleos 환경 검증.

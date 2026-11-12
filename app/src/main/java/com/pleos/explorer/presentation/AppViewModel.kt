@@ -60,6 +60,16 @@ class AppViewModel(
     }
 
     fun setConsent(granted: Boolean) = change { settingsRepository.setRecordingConsent(granted) }
+    fun deleteTrip(id: String) {
+        if (drive.value.running || drive.value.finishing || drive.value.deleting) return
+        driveStatus.deleting = true
+        viewModelScope.launch {
+            try { reports.deleteTrip(id); loadReport() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { mutableError.value = "주행 삭제를 완료하지 못했어요" }
+            finally { driveStatus.deleting = false }
+        }
+    }
     fun setTts(enabled: Boolean) = change { settingsRepository.setTtsEnabled(enabled) }
     fun clearError() { mutableError.value = null }
     private fun change(action: suspend () -> Unit) {
