@@ -1,0 +1,7 @@
+[
+  { "id": "gwangan_bridge", "name": "광안대교", "type": "BRIDGE", "region": "부산", "lat": 35.1475, "lon": 129.1300, "radiusM": 500, "story": "부산 바다 위를 가로지르는 복층 현수교예요." },
+  { "id": "gadeok_tunnel", "name": "가덕해저터널", "type": "TUNNEL", "region": "부산", "lat": 35.0400, "lon": 128.8300, "radiusM": 800, "story": "바다 밑을 지나는 침매터널 구간이에요." },
+  { "id": "incheon_bridge", "name": "인천대교", "type": "BRIDGE", "region": "인천", "lat": 37.4136, "lon": 126.5986, "radiusM": 800 },
+  { "id": "seohae_bridge", "name": "서해대교", "type": "BRIDGE", "region": "경기", "lat": 36.9450, "lon": 126.8350, "radiusM": 800 },
+  { "id": "namsan1_tunnel", "name": "남산1호터널", "type": "TUNNEL", "region": "서울", "lat": 37.5530, "lon": 126.9890, "radiusM": 400 }
+]
