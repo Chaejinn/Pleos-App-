@@ -191,6 +191,53 @@ class ProcessRegionVisitUseCaseTest {
     }
 
     @Test
+    fun `first F03 segment of next trip resets unqualified progress but preserves entry identity`() = runBlocking {
+        val (store, useCase) = fixture()
+        useCase.begin()
+        var id = 0
+        val recorder = TrackRecorder(IdGenerator { "track-${++id}" })
+        var track = recorder.start("trip", 1_000_000, "session").snapshot
+        suspend fun approved(sequence: Long, northM: Double, elapsedMs: Long): Boolean {
+            val validation = LocationValidator().validate(LocationSample(1_000_000 + elapsedMs, elapsedMs,
+                point(0.0, northM), null, null, 5.0), track.previous) as LocationValidation.Accepted
+            val update = recorder.process(track, validation, sequence, emptyMap())
+            useCase.process("session", sequence, RegionInput.Location(validation.location,
+                update.connectedDistanceM, update.newSegment))
+            track = update.snapshot
+            return update.newSegment
+        }
+
+        (0..20).forEach { approved(it.toLong(), it * 10.0, it * 5_000L) }
+        val candidate = requireNotNull(store.snapshot?.candidate)
+        val nextEntrySequence = requireNotNull(store.snapshot).nextEntrySequence
+        assertEquals(100_000L, candidate.dwellMs)
+        assertEquals(200.0, candidate.distanceM, 0.001)
+        assertFalse(candidate.qualified)
+        useCase.process("session", 21, RegionInput.TripEnded)
+        useCase.process("session", 22, RegionInput.TripStarted("trip-2"))
+        assertEquals(candidate, store.snapshot?.candidate)
+
+        track = recorder.start("trip-2", 1_105_000, "session").snapshot
+        assertTrue(approved(23, 200.0, 105_000))
+        val restarted = requireNotNull(store.snapshot?.candidate)
+        assertEquals(candidate.copy(distanceM = 0.0, dwellMs = 0), restarted)
+        assertEquals(nextEntrySequence, store.snapshot?.nextEntrySequence)
+        (24..58).forEach { approved(it.toLong(), 200.0, 105_000 + (it - 23) * 5_000L) }
+        assertEquals(175_000L, requireNotNull(store.snapshot?.candidate).dwellMs)
+        assertTrue(store.badges.isEmpty())
+        assertTrue(store.visits.isEmpty())
+        assertTrue(store.rewards.isEmpty())
+
+        approved(59, 200.0, 285_000)
+        val visit = store.visits.values.single()
+        assertEquals("trip-2", visit.tripId)
+        assertEquals(candidate.entrySequence, visit.entrySequence)
+        assertEquals(1_285_000L, visit.qualifiedAtMs)
+        assertEquals(1, store.badges.getValue("REGION:A").visitCount)
+        assertEquals("trip-2", store.rewards.values.single().tripId)
+    }
+
+    @Test
     fun `visit without a trip creates badge but no dangling trip visit`() = runBlocking {
         val (store, useCase) = fixture()
         useCase.begin(null)
