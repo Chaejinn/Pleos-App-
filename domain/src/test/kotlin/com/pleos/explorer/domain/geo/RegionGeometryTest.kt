@@ -4,6 +4,7 @@ import com.pleos.explorer.domain.RegionTestFixtures.point
 import com.pleos.explorer.domain.RegionTestFixtures.rectangle
 import com.pleos.explorer.domain.RegionTestFixtures.region
 import com.pleos.explorer.domain.model.GeoBounds
+import com.pleos.explorer.domain.model.GeoPoint
 import com.pleos.explorer.domain.model.RegionGeometry
 import com.pleos.explorer.domain.model.RegionPolygon
 import org.junit.Assert.assertEquals
@@ -173,6 +174,49 @@ class RegionGeometryTest {
             IndexedRegionCatalog(listOf(region("A", RegionGeometry(listOf(RegionPolygon(
                 rectangle(-200.0, -200.0, 200.0, 200.0),
                 listOf(rectangle(-100.0, -100.0, 50.0, 50.0), rectangle(0.0, 0.0, 100.0, 100.0)),
+            ))))))
+        }
+    }
+
+    @Test
+    fun `catalog models reject nonfinite out of range and missing metadata`() {
+        val invalidBoxes = listOf(
+            doubleArrayOf(-181.0, -1.0, 1.0, 1.0), doubleArrayOf(-1.0, -1.0, 181.0, 1.0),
+            doubleArrayOf(-1.0, -91.0, 1.0, 1.0), doubleArrayOf(-1.0, -1.0, 1.0, 91.0),
+            doubleArrayOf(0.0, 2.0, 1.0, 1.0), doubleArrayOf(0.0, 0.0, Double.NaN, 1.0),
+            doubleArrayOf(0.0, Double.NaN, 1.0, 1.0), doubleArrayOf(0.0, 0.0, 1.0, Double.POSITIVE_INFINITY),
+        )
+        invalidBoxes.forEach { values -> assertThrows(IllegalArgumentException::class.java) {
+            GeoBounds(values[0], values[1], values[2], values[3])
+        } }
+        val valid = region("A")
+        listOf(GeoPoint(Double.NaN, 127.0), GeoPoint(91.0, 127.0), GeoPoint(36.0, Double.NaN),
+            GeoPoint(36.0, -181.0)).forEach { invalid ->
+            assertThrows(IllegalArgumentException::class.java) { valid.copy(representativePoint = invalid) }
+        }
+        assertThrows(IllegalArgumentException::class.java) { valid.copy(code = "") }
+        assertThrows(IllegalArgumentException::class.java) { valid.copy(name = "") }
+        assertThrows(IllegalArgumentException::class.java) { valid.copy(provinceCode = "") }
+        assertThrows(IllegalArgumentException::class.java) { GeoBounds.enclosing(emptyList()) }
+        assertTrue(valid.bbox.contains(point(0.0, 0.0)))
+        assertTrue(valid.bbox.contains(point(-5000.0, -5000.0)))
+        assertEquals(false, valid.bbox.contains(point(6000.0, 0.0)))
+        assertEquals(false, valid.bbox.contains(point(0.0, 6000.0)))
+    }
+
+    @Test
+    fun `catalog rejects zero area nested holes and antimeridian region rings`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            RegionPolygon(listOf(point(0.0, 0.0), point(1.0, 0.0), point(2.0, 0.0), point(0.0, 0.0)))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            RegionPolygon(listOf(GeoPoint(0.0, 179.0), GeoPoint(1.0, -179.0),
+                GeoPoint(2.0, 179.0), GeoPoint(0.0, 179.0)))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            IndexedRegionCatalog(listOf(region("A", RegionGeometry(listOf(RegionPolygon(
+                rectangle(-200.0, -200.0, 200.0, 200.0), listOf(rectangle(-100.0, -100.0, 100.0, 100.0),
+                    rectangle(-50.0, -50.0, 50.0, 50.0)),
             ))))))
         }
     }

@@ -345,6 +345,47 @@ class ProcessRegionVisitUseCaseTest {
         assertTrue(store.visits.isEmpty())
     }
 
+    @Test
+    fun `missing session invalid events and mismatched F03 distances do not commit`() = runBlocking {
+        val (store, useCase) = fixture()
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { useCase.resume("session") } }
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { useCase.process("session", 0, RegionInput.ContinuityLost) }
+        }
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { useCase.start("session", "") } }
+        useCase.begin()
+        val invalidEvents = listOf(RegionInput.Tick(-1, 0), RegionInput.Tick(0, -1), RegionInput.TripStarted(""),
+            RegionInput.TripDetached(""), RegionInput.Location(location(0.0, 0), -1.0),
+            RegionInput.Location(location(0.0, 0), 1.0))
+        invalidEvents.forEach { input ->
+            val before = store.snapshot
+            assertThrows(IllegalArgumentException::class.java) { runBlocking { useCase.process("session", 0, input) } }
+            assertEquals(before, store.snapshot)
+        }
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { useCase.resume("") } }
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { useCase.start("other", "trip") } }
+        useCase.move(0, 0.0, 0)
+        val before = store.snapshot
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { useCase.move(1, 25.0, 1_000, 50.0) } }
+        assertEquals(before, store.snapshot)
+    }
+
+    @Test
+    fun `invalid persisted badge and visit count overflow fail before committing qualification`() = runBlocking {
+        listOf(0, Int.MAX_VALUE).forEach { count ->
+            val (store, useCase) = fixture()
+            store.badges["REGION:A"] = RegionBadge("REGION:A", "A", BadgeType.REGION, null, 10, count)
+            useCase.begin()
+            (0..35).forEach { useCase.move(it.toLong(), 0.0, it * 5_000L) }
+            val before = store.snapshot
+            val expected = if (count == 0) IllegalStateException::class.java else ArithmeticException::class.java
+            assertThrows(expected) { runBlocking { useCase.move(36, 0.0, 180_000) } }
+            assertEquals(before, store.snapshot)
+            assertTrue(store.rewards.isEmpty())
+            assertTrue(store.visits.isEmpty())
+        }
+    }
+
     private class MemoryStore : RegionVisitStore {
         var snapshot: RegionVisitSnapshot? = null
         val badges = mutableMapOf<String, RegionBadge>()
