@@ -319,6 +319,8 @@ F-03의 Rejected는 ContinuityLost로, Accepted는 `RegionInput.Location(locatio
 같은 진입에서 1000m 이상 이동하거나 유효 관측 사이의 체류 합이 180000ms 이상이면 `VisitQualified`를 한 번 제안한다.
 체류는 두 관측을 잇는 선분 전체가 같은 지역을 유지할 때만 누적한다. 지역 전환 시각을 추정해 체류 시간을 만들지 않는다.
 10초 이상 위치 공백·newSegment·ContinuityLost·새 세션 resume에서는 미확정 거리·체류를 초기화한다.
+TripStarted 자체는 후보를 보존하지만, 다음 Trip의 첫 F-03 승인 위치는 newSegment=true이므로 미확정 누적을 초기화한다.
+같은 지역이면 entrySequence는 유지하며 새 위치부터 다시 누적한다.
 이미 확정한 진입의 qualified는 유지하며, 유효 이탈 후 재진입이 확인되어야 다음 방문이다.
 동일/이전 위치 elapsedMs 입력은 진척을 더하지 않는다. qualifiedAtMs는 조건 충족을 확인한 승인 위치의 timeMs다.
 
