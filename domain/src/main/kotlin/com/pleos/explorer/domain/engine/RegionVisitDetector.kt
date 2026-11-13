@@ -27,6 +27,10 @@ class RegionVisitDetector(catalog: RegionCatalog) {
                 require(input.tripId.isNotBlank())
                 RegionVisitUpdate(next.copy(tripId = input.tripId))
             }
+            is RegionInput.TripDetached -> {
+                require(input.tripId.isNotBlank())
+                RegionVisitUpdate(if (next.tripId == input.tripId) next.copy(tripId = null) else next)
+            }
             RegionInput.TripEnded -> RegionVisitUpdate(next)
             RegionInput.ContinuityLost -> RegionVisitUpdate(breakContinuity(next))
         }

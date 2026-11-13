@@ -27,6 +27,7 @@ sealed interface RegionInput {
     ) : RegionInput
     data class Tick(val elapsedMs: Long, val timeMs: Long) : RegionInput
     data class TripStarted(val tripId: String) : RegionInput
+    data class TripDetached(val tripId: String) : RegionInput
     data object TripEnded : RegionInput
     data object ContinuityLost : RegionInput
 }
