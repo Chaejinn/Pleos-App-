@@ -127,7 +127,7 @@ class RecordTrackUseCaseTest {
     }
 
     @Test
-    fun `finish retains last approved endpoint and raw points but simplifies display path`() = runBlocking {
+    fun `finish retains last approved endpoint and raw points but simplifies display path`() = runBlocking<Unit> {
         val (store, useCase) = fixture()
         useCase.begin()
         (0..10).forEach { useCase.process("trip", "session", it.toLong(), sample(it * 25.0, it * 1_000L)) }
@@ -162,7 +162,7 @@ class RecordTrackUseCaseTest {
     }
 
     @Test
-    fun `restart with reset monotonic clock flushes tail and does not bridge sessions`() = runBlocking {
+    fun `restart with reset monotonic clock flushes tail and does not bridge sessions`() = runBlocking<Unit> {
         val (store, first) = fixture()
         first.begin()
         first.process("trip", "session", 0, sample(0.0, 50_000))
