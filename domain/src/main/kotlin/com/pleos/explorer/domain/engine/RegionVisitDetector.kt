@@ -21,13 +21,7 @@ class RegionVisitDetector(catalog: RegionCatalog) {
             is RegionInput.Location -> processLocation(next, input)
             is RegionInput.Tick -> {
                 require(input.elapsedMs >= 0 && input.timeMs >= 0)
-                if (input.elapsedMs < (next.lastElapsedMs ?: 0)) RegionVisitUpdate(next) else {
-                    val timed = next.copy(lastElapsedMs = input.elapsedMs)
-                    RegionVisitUpdate(if (next.previous != null &&
-                        input.elapsedMs - next.previous.elapsedMs >= DetectionPolicy.LOCATION_GAP_MS) {
-                        breakContinuity(timed)
-                    } else timed)
-                }
+                RegionVisitUpdate(next)
             }
             is RegionInput.TripStarted -> {
                 require(input.tripId.isNotBlank())
@@ -42,14 +36,13 @@ class RegionVisitDetector(catalog: RegionCatalog) {
         require(sessionId.isNotBlank() && sessionId != state.sessionId)
         return RegionVisitUpdate(breakContinuity(state).copy(sessionId = sessionId,
             revision = Math.addExact(state.revision, 1), lastInputSequence = -1,
-            lastElapsedMs = null, lastLocationElapsedMs = null))
+            lastLocationElapsedMs = null))
     }
 
     private fun processLocation(state: RegionVisitSnapshot, input: RegionInput.Location): RegionVisitUpdate {
         require(input.connectedDistanceM.isFinite() && input.connectedDistanceM >= 0)
         val location = input.location
-        if (location.elapsedMs <= (state.lastLocationElapsedMs ?: -1) ||
-            location.elapsedMs < (state.lastElapsedMs ?: 0)) return RegionVisitUpdate(state)
+        if (location.elapsedMs <= (state.lastLocationElapsedMs ?: -1)) return RegionVisitUpdate(state)
         val previous = state.previous
         val connected = previous != null && !input.newSegment &&
             location.elapsedMs - previous.elapsedMs < DetectionPolicy.LOCATION_GAP_MS
@@ -79,8 +72,7 @@ class RegionVisitDetector(catalog: RegionCatalog) {
             }
         } else require(input.connectedDistanceM == 0.0) { "Disconnected location cannot carry distance" }
         next = enter(next, geometry.locate(location.point, next.candidate?.regionCode))
-        next = next.copy(previous = location, lastElapsedMs = location.elapsedMs,
-            lastLocationElapsedMs = location.elapsedMs)
+        next = next.copy(previous = location, lastLocationElapsedMs = location.elapsedMs)
         return RegionVisitUpdate(next, qualified.toList())
     }
 

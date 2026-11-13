@@ -16,7 +16,6 @@ data class RegionVisitSnapshot(
     val nextEntrySequence: Long = 0,
     val candidate: RegionVisitCandidate? = null,
     val previous: ValidatedLocation? = null,
-    val lastElapsedMs: Long? = null,
     val lastLocationElapsedMs: Long? = null,
 )
 
