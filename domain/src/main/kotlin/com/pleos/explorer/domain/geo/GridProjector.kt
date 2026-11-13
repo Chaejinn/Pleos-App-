@@ -30,6 +30,9 @@ class GridProjector {
     fun split(from: GeoPoint, to: GeoPoint): List<GridSection> {
         val a = project(from)
         val b = project(to)
+        if (abs(to.longitudeDeg - from.longitudeDeg) == 360.0) {
+            return split(from, to.copy(longitudeDeg = from.longitudeDeg))
+        }
         if (abs(to.longitudeDeg - from.longitudeDeg) > 180) {
             val endLongitude = to.longitudeDeg + if (to.longitudeDeg < from.longitudeDeg) 360 else -360
             val boundary = if (endLongitude > from.longitudeDeg) 180.0 else -180.0
