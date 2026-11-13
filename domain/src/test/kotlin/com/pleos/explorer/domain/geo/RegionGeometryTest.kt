@@ -117,4 +117,63 @@ class RegionGeometryTest {
             ))))))
         }
     }
+
+    @Test
+    fun `consecutive duplicate ring vertices remain valid`() {
+        val ring = rectangle(-100.0, -100.0, 100.0, 100.0)
+        val duplicated = ring.take(2) + ring.drop(1)
+        val resolver = RegionGeometryResolver(IndexedRegionCatalog(listOf(region("A",
+            RegionGeometry(listOf(RegionPolygon(duplicated)))))))
+        assertEquals("A", resolver.locate(point(0.0, 0.0)))
+    }
+
+    @Test
+    fun `indexed queries cross multiple tree branches without losing candidates`() {
+        val catalog = IndexedRegionCatalog((0..5).flatMap { row -> (0..5).map { column ->
+            region("R${row}_$column", column * 300.0, row * 300.0, column * 300.0 + 100, row * 300.0 + 100)
+        } })
+        assertEquals(listOf("R4_3"), catalog.findCandidates(point(950.0, 1250.0)).map { it.code })
+        val expected = (1..3).flatMap { row -> (1..3).map { column -> "R${row}_$column" } }.toSet()
+        assertEquals(expected, catalog.findCandidates(GeoBounds.between(point(250.0, 250.0),
+            point(1050.0, 1050.0))).map { it.code }.toSet())
+        val sections = RegionGeometryResolver(catalog).split(point(-100.0, 350.0), point(1700.0, 350.0))
+        assertEquals((0..5).map { "R1_$it" }, sections.mapNotNull { it.regionCode })
+    }
+
+    @Test
+    fun `concave polygon may be exited and reentered within one segment`() {
+        val ring = listOf(point(-200.0, -200.0), point(200.0, -200.0), point(200.0, 200.0),
+            point(50.0, 200.0), point(50.0, -50.0), point(-50.0, -50.0), point(-50.0, 200.0),
+            point(-200.0, 200.0), point(-200.0, -200.0))
+        val resolver = RegionGeometryResolver(IndexedRegionCatalog(listOf(region("A",
+            RegionGeometry(listOf(RegionPolygon(ring)))))))
+        assertEquals(listOf("A", null, "A"), resolver.split(point(-100.0, 100.0),
+            point(100.0, 100.0)).map { it.regionCode })
+    }
+
+    @Test
+    fun `touching a polygon vertex does not manufacture an inside interval`() {
+        val resolver = RegionGeometryResolver(IndexedRegionCatalog(listOf(region("A", 0.0, 0.0, 100.0, 100.0))))
+        val sections = resolver.split(point(-100.0, 100.0), point(100.0, -100.0))
+        assertEquals(listOf(null), sections.map { it.regionCode })
+        assertEquals("A", resolver.locate(point(0.0, 0.0)))
+    }
+
+    @Test
+    fun `invalid bounds self crossing rings and overlapping holes are rejected`() {
+        assertThrows(IllegalArgumentException::class.java) { GeoBounds(Double.NaN, 0.0, 1.0, 1.0) }
+        assertThrows(IllegalArgumentException::class.java) { GeoBounds(2.0, 0.0, 1.0, 1.0) }
+        assertThrows(IllegalArgumentException::class.java) { GeoBounds(0.0, 91.0, 1.0, 92.0) }
+        assertThrows(IllegalArgumentException::class.java) {
+            IndexedRegionCatalog(listOf(region("A", RegionGeometry(listOf(RegionPolygon(
+                listOf(point(0.0, 0.0), point(100.0, 100.0), point(0.0, 100.0), point(80.0, 0.0), point(0.0, 0.0)),
+            ))))))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            IndexedRegionCatalog(listOf(region("A", RegionGeometry(listOf(RegionPolygon(
+                rectangle(-200.0, -200.0, 200.0, 200.0),
+                listOf(rectangle(-100.0, -100.0, 50.0, 50.0), rectangle(0.0, 0.0, 100.0, 100.0)),
+            ))))))
+        }
+    }
 }
