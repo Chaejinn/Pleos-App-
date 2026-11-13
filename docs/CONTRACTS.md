@@ -194,6 +194,8 @@ recording.finish(tripId, endedAtMs)
 - `start`는 같은 tripId·시작 시각·sessionId로 재시도할 수 있다. `finish`도 종료된 snapshot에 대해 재시도할 수 있다.
   종료 뒤 새 위치 처리는 `IllegalStateException`, 알 수 없는 Trip·잘못된 호출 인자는 `IllegalArgumentException`이다.
 - finish의 종료 시각은 요청 시각, 시작 시각, 마지막 승인 위치의 벽시각 중 최댓값이다. 벽시계 역전으로 음수 주행 기간을 만들지 않는다.
+  resume 직후 새 승인 위치가 없으면 sequence 오름차순 원본의 마지막 점 시각을 사용한다. resume가 미저장 끝점을 먼저 commit하므로
+  복구 전 마지막 승인 시각도 보존된다. 벽시계 역전이 가능하므로 원본 전체의 최대 timeMs로 대체하지 않는다.
   종료점의 시각은 마지막 승인 위치 원본 시각이며 종료 요청 시각으로 덮어쓰지 않는다.
 
 ### snapshot과 변경 제안

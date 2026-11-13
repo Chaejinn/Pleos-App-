@@ -97,15 +97,17 @@ F-03 구현(이슈 #3, 2026-11-13)은 `LocationValidator` → `TrackRecorder` �
 실제 저장 뒤 응답 유실이 발생해도 같은 입력을 다시 누적하지 않는다. 저장 오류 후에는 다음 입력을 진행시키지 않는다.
 
 재시작은 새 sessionId로 명시적 resume한다. 미저장 승인 끝점을 이전 segment에 flush하고 이전 단조 시계 기준을 비운다.
+복구 직후 위치 없이 종료해도 마지막 원본의 sequence 기준 시각으로 종료 시각을 보정한다. 이전 센서값을 경로 연결에 재사용하지 않는다.
 200m 미만 종료는 `DISCARDED`로 정리하고 pending 격자도 전역에 반영하지 않는다. 완료·폐기 상태의 최소 cursor는 종료 재시도에 사용한다.
 Room 구현·앱 입력 큐 연결과 이미 확정한 보상 참조 해제는 후속 앱 통합 범위이며, 현재 앱의 legacy 저장 동작은 바꾸지 않았다.
 
 격자 신규 거리 중복 방지는 격자별 처리 선분의 공선 겹침 비율로 계산한다. 완전·부분 되돌아감과 다른 샘플 분할을 처리하며,
 비공선 GPS 잡음을 같은 도로로 합치는 map matching은 수행하지 않는다. 자세한 API와 저장 원자성 조건은 [계약 7절](CONTRACTS.md#7-f-03-구현-api와-앱-연결-계약)을 따른다.
 
-검증 기록(2026-11-13): 신규 F-03 테스트 24개, 기존 domain 12개, app 14개 총 50개 통과.
+검증 기록(2026-11-13): F-03 테스트 28개, 기존 domain 12개, app 14개 총 54개 통과.
+복구 직후 종료·반복 복구·벽시계 역전·빈 기록을 다루는 회귀 테스트 4개를 포함한다.
 `:app:lintDebug` 오류 0·기존 경고 35개, `:app:assembleDebug` 성공.
-JaCoCo 0.8.12로 신규 코드의 instruction 94.3%, branch 84.5%, line 99.7%, method 85.8%를 측정했다.
+JaCoCo 0.8.12로 신규 코드의 instruction 94.4%, branch 84.6%, line 99.7%, method 86.6%를 측정했다.
 측정에서 `legacy/**`, 기존 `UserSettings`·`SettingsRepository`를 제외했다. 측정용 로컬 Gradle init script만 사용했으며
 공유 Gradle 파일에는 변경이 없다. Android 없는 저장 실패·취소·응답 유실·재시작 테스트이며, 실제 Room·SDK 연결 검증은 후속 통합에서 수행한다.
 
