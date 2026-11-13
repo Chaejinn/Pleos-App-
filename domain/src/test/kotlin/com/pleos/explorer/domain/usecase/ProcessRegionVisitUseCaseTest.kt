@@ -328,6 +328,23 @@ class ProcessRegionVisitUseCaseTest {
         assertEquals(before, store.snapshot)
     }
 
+    @Test
+    fun `detaching deleted trip preserves dwell and clears only matching trip reference`() = runBlocking {
+        val (store, useCase) = fixture()
+        useCase.begin()
+        (0..20).forEach { useCase.move(it.toLong(), 0.0, it * 5_000L) }
+        val candidate = store.snapshot?.candidate
+        useCase.process("session", 21, RegionInput.TripDetached("other-trip"))
+        assertEquals("trip", store.snapshot?.tripId)
+        useCase.process("session", 22, RegionInput.TripDetached("trip"))
+        assertNull(store.snapshot?.tripId)
+        assertEquals(candidate, store.snapshot?.candidate)
+        (23..38).forEach { useCase.move(it.toLong(), 0.0, 100_000 + (it - 22) * 5_000L) }
+        assertNull(store.badges.getValue("REGION:A").firstTripId)
+        assertNull(store.rewards.values.single().tripId)
+        assertTrue(store.visits.isEmpty())
+    }
+
     private class MemoryStore : RegionVisitStore {
         var snapshot: RegionVisitSnapshot? = null
         val badges = mutableMapOf<String, RegionBadge>()
