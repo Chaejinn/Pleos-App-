@@ -189,6 +189,74 @@ class RecordTrackUseCaseTest {
     }
 
     @Test
+    fun `finish after restart retains flushed endpoint time despite wall clock rollback`() = runBlocking {
+        val (store, first) = fixture()
+        first.begin()
+        (0..10).forEach { first.process("trip", "session", it.toLong(), sample(it * 25.0, it * 1_000L)) }
+        first.process("trip", "session", 11, sample(255.0, 11_000))
+        val second = RecordTrackUseCase(store, TrackRecorder(IdGenerator { "restart-id" }))
+        second.resume("trip", "session-2")
+
+        val finished = second.finish("trip", 1_005_000)
+
+        assertEquals(1_011_000L, finished.snapshot.trip.endedAtMs)
+        assertEquals(TripStatus.FINISHED, finished.snapshot.status)
+        assertEquals(255.0, finished.snapshot.trip.distanceM, 0.001)
+        assertEquals(12, store.points.size)
+        assertEquals(1_011_000L, store.points.last().timeMs)
+        assertEquals(store.points.last().point, finished.snapshot.trip.simplifiedPath.single().points.last())
+        val committed = store.snapshot
+        second.finish("trip", 1_020_000)
+        assertEquals(committed, store.snapshot)
+    }
+
+    @Test
+    fun `finish after repeated restarts uses point sequence instead of maximum wall time`() = runBlocking {
+        val (store, useCase) = fixture()
+        useCase.begin()
+        (0..10).forEach { useCase.process("trip", "session", it.toLong(), sample(it * 25.0, it * 1_000L)) }
+        useCase.resume("trip", "session-2")
+        useCase.process("trip", "session-2", 0, sample(1000.0, 0).copy(timeMs = 1_004_000))
+        useCase.resume("trip", "session-3")
+
+        val finished = useCase.finish("trip", 1_002_000)
+
+        assertEquals(1_004_000L, finished.snapshot.trip.endedAtMs)
+        assertEquals(250.0, finished.snapshot.trip.distanceM, 0.001)
+        assertEquals(2, finished.snapshot.trip.simplifiedPath.size)
+        assertNotEquals(store.points.first().pathSegmentId, store.points.last().pathSegmentId)
+        assertEquals(1_010_000L, store.points.dropLast(1).last().timeMs)
+    }
+
+    @Test
+    fun `finish after restart preserves later requested end time`() = runBlocking {
+        val (store, useCase) = fixture()
+        useCase.begin()
+        useCase.process("trip", "session", 0, sample(0.0, 1_000))
+        useCase.resume("trip", "session-2")
+
+        val finished = useCase.finish("trip", 1_020_000)
+
+        assertEquals(1_020_000L, finished.snapshot.trip.endedAtMs)
+        assertEquals(TripStatus.DISCARDED, finished.snapshot.status)
+        assertTrue(store.points.isEmpty())
+    }
+
+    @Test
+    fun `finish after empty restart remains bounded by trip start`() = runBlocking {
+        val (_, useCase) = fixture()
+        useCase.begin()
+        useCase.resume("trip", "session-2")
+
+        val finished = useCase.finish("trip", 999_000)
+
+        assertEquals(1_000_000L, finished.snapshot.trip.endedAtMs)
+        assertEquals(TripStatus.DISCARDED, finished.snapshot.status)
+        assertTrue(finished.points.isEmpty())
+        assertTrue(finished.roads.isEmpty())
+    }
+
+    @Test
     fun `failed commit preserves persisted state and retry has no duplicate distance or visit`() = runBlocking {
         val (store, useCase) = fixture()
         useCase.begin()
