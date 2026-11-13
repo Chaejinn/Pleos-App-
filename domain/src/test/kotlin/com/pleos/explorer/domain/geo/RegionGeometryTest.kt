@@ -1,0 +1,120 @@
+package com.pleos.explorer.domain.geo
+
+import com.pleos.explorer.domain.RegionTestFixtures.point
+import com.pleos.explorer.domain.RegionTestFixtures.rectangle
+import com.pleos.explorer.domain.RegionTestFixtures.region
+import com.pleos.explorer.domain.model.GeoBounds
+import com.pleos.explorer.domain.model.RegionGeometry
+import com.pleos.explorer.domain.model.RegionPolygon
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class RegionGeometryTest {
+    @Test
+    fun `polygon excludes hole interiors and includes boundary points`() {
+        val geometry = RegionGeometry(listOf(RegionPolygon(
+            rectangle(-200.0, -200.0, 200.0, 200.0),
+            listOf(rectangle(-50.0, -50.0, 50.0, 50.0)),
+        )))
+        val resolver = RegionGeometryResolver(IndexedRegionCatalog(listOf(region("A", geometry))))
+        assertEquals("A", resolver.locate(point(100.0, 0.0)))
+        assertNull(resolver.locate(point(0.0, 0.0)))
+        assertNull(resolver.locate(point(300.0, 0.0)))
+        assertEquals("A", resolver.locate(point(200.0, 0.0)))
+        assertEquals("A", resolver.locate(point(50.0, 0.0)))
+    }
+
+    @Test
+    fun `multipolygon preserves separated islands`() {
+        val geometry = RegionGeometry(listOf(
+            RegionPolygon(rectangle(-300.0, -100.0, -100.0, 100.0)),
+            RegionPolygon(rectangle(100.0, -100.0, 300.0, 100.0)),
+        ))
+        val resolver = RegionGeometryResolver(IndexedRegionCatalog(listOf(region("A", geometry))))
+        assertEquals("A", resolver.locate(point(-200.0, 0.0)))
+        assertEquals("A", resolver.locate(point(200.0, 0.0)))
+        assertNull(resolver.locate(point(0.0, 0.0)))
+    }
+
+    @Test
+    fun `shared boundary retains previous region otherwise chooses code order`() {
+        val left = region("A", -200.0, -100.0, 0.0, 100.0)
+        val right = region("B", 0.0, -100.0, 200.0, 100.0)
+        val resolver = RegionGeometryResolver(IndexedRegionCatalog(listOf(right, left)))
+        assertEquals("A", resolver.locate(point(0.0, 0.0)))
+        assertEquals("B", resolver.locate(point(0.0, 0.0), "B"))
+        assertEquals("A", resolver.locate(point(0.0, 0.0), "missing"))
+        assertEquals("A", resolver.locate(point(-10.0, 0.0), "B"))
+    }
+
+    @Test
+    fun `line splitting finds crossed region even when both endpoints are outside`() {
+        val catalog = IndexedRegionCatalog(listOf(region("A", -50.0, -100.0, 50.0, 100.0)))
+        val sections = RegionGeometryResolver(catalog).split(point(-100.0, 0.0), point(100.0, 0.0))
+        assertEquals(listOf(null, "A", null), sections.map { it.regionCode })
+        assertEquals(0.25, sections[1].startFraction, 1e-8)
+        assertEquals(0.75, sections[1].endFraction, 1e-8)
+        assertEquals(1.0, sections.sumOf { it.endFraction - it.startFraction }, 1e-9)
+    }
+
+    @Test
+    fun `line crossing a hole is split into disconnected inside intervals`() {
+        val geometry = RegionGeometry(listOf(RegionPolygon(
+            rectangle(-200.0, -100.0, 200.0, 100.0),
+            listOf(rectangle(-50.0, -50.0, 50.0, 50.0)),
+        )))
+        val resolver = RegionGeometryResolver(IndexedRegionCatalog(listOf(region("A", geometry))))
+        val sections = resolver.split(point(-100.0, 0.0), point(100.0, 0.0))
+        assertEquals(listOf("A", null, "A"), sections.map { it.regionCode })
+        assertEquals(0.5, sections.filter { it.regionCode == null }
+            .sumOf { it.endFraction - it.startFraction }, 1e-8)
+    }
+
+    @Test
+    fun `line on shared border preserves selected region without duplicate intervals`() {
+        val resolver = RegionGeometryResolver(IndexedRegionCatalog(listOf(
+            region("A", -100.0, -200.0, 0.0, 200.0),
+            region("B", 0.0, -200.0, 100.0, 200.0),
+        )))
+        val sections = resolver.split(point(0.0, -100.0), point(0.0, 100.0), "B")
+        assertEquals(listOf("B"), sections.map { it.regionCode })
+        assertEquals(0.0, sections.single().startFraction, 0.0)
+        assertEquals(1.0, sections.single().endFraction, 0.0)
+    }
+
+    @Test
+    fun `bounding box queries omit distant regions and preserve crossing candidates`() {
+        val catalog = IndexedRegionCatalog(listOf(
+            region("A", -100.0, -100.0, 100.0, 100.0),
+            region("B", 1000.0, 1000.0, 1100.0, 1100.0),
+        ))
+        assertEquals(listOf("A"), catalog.findCandidates(point(0.0, 0.0)).map { it.code })
+        assertTrue(catalog.findCandidates(point(500.0, 500.0)).isEmpty())
+        assertEquals(listOf("A"), catalog.findCandidates(GeoBounds.between(
+            point(-500.0, 0.0), point(500.0, 0.0))).map { it.code })
+        assertTrue(IndexedRegionCatalog(emptyList()).findCandidates(point(0.0, 0.0)).isEmpty())
+    }
+
+    @Test
+    fun `invalid polygon data and duplicate region codes fail instead of becoming empty catalog`() {
+        assertThrows(IllegalArgumentException::class.java) { RegionGeometry(emptyList()) }
+        assertThrows(IllegalArgumentException::class.java) {
+            RegionPolygon(listOf(point(0.0, 0.0), point(100.0, 0.0), point(100.0, 100.0)))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            RegionPolygon(listOf(point(0.0, 0.0), point(0.0, 0.0), point(0.0, 0.0), point(0.0, 0.0)))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            IndexedRegionCatalog(listOf(region("A"), region("A")))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            IndexedRegionCatalog(listOf(region("A", RegionGeometry(listOf(RegionPolygon(
+                rectangle(-100.0, -100.0, 100.0, 100.0),
+                listOf(rectangle(200.0, 200.0, 300.0, 300.0)),
+            ))))))
+        }
+    }
+}
