@@ -22,6 +22,11 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments["room.schemaLocation"] = "$projectDir/schemas"
+            }
+        }
     }
 
     signingConfigs {
@@ -58,6 +63,9 @@ android {
 }
 
 dependencies {
+    implementation(libs.room.runtime)
+    annotationProcessor(libs.room.compiler)
+    implementation(libs.gson)
     implementation(project(":domain"))
     implementation(libs.androidx.core)
     implementation(libs.androidx.appcompat)
