@@ -89,10 +89,10 @@ internal object RegionShapeMath {
     }
 
     private fun validateRing(ring: List<GeoPoint>) {
-        val edges = ring.zipWithNext().mapIndexed { i, (a, b) -> Edge(i, a, b) }
+        val edges = ring.zipWithNext().filter { (a, b) -> a != b }.mapIndexed { i, (a, b) -> Edge(i, a, b) }
         val index = BoundsIndex(edges) { it.bbox }
-        edges.forEach { edge -> index.query(edge.bbox).forEach { other ->
-            if (other.index <= edge.index + 1 || edge.index == 0 && other.index == edges.lastIndex) return@forEach
+        edges.forEach { edge -> index.query(edge.bbox).forEach candidate@{ other ->
+            if (other.index <= edge.index + 1 || edge.index == 0 && other.index == edges.lastIndex) return@candidate
             require(intersections(edge.from, edge.to, other.from, other.to).isEmpty()) { "Self-intersecting ring" }
         } }
     }
