@@ -12,7 +12,7 @@
 main의 기능명세서·계약·구현 결정·작업 계획과 앱 입력·서비스·UI·저장·음성 코드를 확인했다.
 F-03의 신규 API는 PR #4에 있으며 아직 앱에 연결되지 않았다.
 
-이번 변경은 이 분석 문서 추가뿐이다. 코드·기존 명세·계약·SDK 버전·빌드 설정·설치 환경은 수정하지 않는다.
+이번 변경 범위는 이 분석 문서다. 코드·기존 명세·계약·SDK 버전·빌드 설정·설치 환경은 수정하지 않는다.
 PR #4도 보존하며 병합하지 않는다. 아래 적용 판단은 설계 변경 승인이나 플랫폼 승인 결과를 의미하지 않는다.
 기존 기능명세서 2장에도 공식 가이드가 더 엄격하면 우선하도록 명시되어 있어, 구현 재개 전에 그 적용 범위를 구체화해야 한다.
 
@@ -132,15 +132,82 @@ FusedLocation의 isSupported와 AAOS property별 가용성 확인을 요구한�
 
 ## 6. 디자인과 입력
 
-[UI Design Guide](https://document.pleos.ai/docs/connect/guide/docs-design/Introduction/intro)는 간결한 정보, 자동 스크롤·주목 유도 억제,
-4.5:1 대비, 주·야간 대응과 빠른 피드백을 설명한다. 중요·보조 글자의 물리적 높이 기준도 제시한다.
-[Display Layout](https://document.pleos.ai/docs/connect/guide/docs-design/getting-started/layout)은 앱 window와 시스템 UI 영역을 구분한다.
-[Typography](https://document.pleos.ai/docs/connect/guide/docs-design/foundations/typography), [Colors](https://document.pleos.ai/docs/connect/guide/docs-design/foundations/colors),
-[Basic button](https://document.pleos.ai/docs/connect/guide/docs-design/components/actions/basic-button)은 세부 자산·상태 규격의 참조다.
+### 6.1 공식 디자인 원칙과 수치
 
-현재 ActionButton의 76dp·24sp는 팀 명세 구현값이다. 이를 모든 차종의 공식 적합성 판정으로 취급하지 않는다.
-일반 MaterialTheme 적용만으로 Pleos 토큰·주야간·대비·좁은 window 대응이 완료되었다고 볼 수 없다.
-컴포넌트 이미지 안의 상세 치수와 디스플레이별 실측은 구현 전 추가 확인한다.
+다음은 [공식 UI Design Guide](https://document.pleos.ai/docs/connect/guide/docs-design/Introduction/intro)에 명시된 기준이다.
+프로젝트 적용안·현재 검증 결과와 구분한다.
+
+| 항목 | 공식 기준 | 프로젝트의 확인 방법 |
+| --- | --- | --- |
+| 정보량 | 핵심 정보를 1~2초 안에 파악할 수 있도록 구성 | 위치·기록 상태와 상세 통계를 분리하고 화면별 우선순위 검토 |
+| 입력 피드백 | 입력 응답 0.25초 기준, 지연 시 처리 중임을 표시 | 탭·기록 시작·삭제의 즉시 피드백과 중복 입력 방지 확인 |
+| 대비 | 텍스트·아이콘·이미지 대비 4.5:1 이상 | 최종 주·야간 색 조합과 지도 위 오버레이를 각각 측정 |
+| 글자 높이 | 중요 정보 5mm 이상, 보조 정보 3mm 이상 | 대상 디스플레이에서 실제 렌더링 크기·글꼴 배율 확인 |
+| 문장 길이 | 문장·단락은 3줄 이내 등 간결한 텍스트 지침 | 좁은 window에서 동의·오류·안내 문구의 줄바꿈 검토. 언어별 글자 수 규칙을 한국어에 임의 환산하지 않음 |
+| 주·야간 | 주변 조명에 맞는 밝기·대비 조정 | 지도·앱 배경·팝업·선택/비활성 상태를 양쪽 테마에서 검토 |
+| 조작 | 한 손으로 가능한 단순한 상호작용 | 주요 기능의 터치 경로와 접근 가능한 닫기·뒤로 동작 확인 |
+| 주의 분산 | 주행 중 시선을 끄는 움직임·자동 스크롤 억제, 운전자 필요와 관련된 알림 | 보상·고스트 연출의 노출을 규제 상태와 연결. 카테고리 허용 여부는 별도 확인 |
+
+현재 ActionButton의 76dp·24sp는 팀 명세 구현값이며 공식 컴포넌트의 확정 치수라는 근거는 없다.
+[Typography](https://document.pleos.ai/docs/connect/guide/docs-design/foundations/typography)의 12sp 이상 권장 설명만으로 차량 중요 정보의 물리적 높이를 충족했다고 판단하지 않는다.
+폰트 계층은 제목·본문·보조·버튼 라벨의 역할별로 정리한다. Asta Sans는 공식 문서가 제공하는 시스템 폰트 참조이며, 다른 폰트가 일괄 금지된다는 의미는 아니다.
+
+### 6.2 레이아웃·시각 자산·컴포넌트
+
+| 공식 문서 | 확인한 규격·의미 | 적용 시 결정할 사항 |
+| --- | --- | --- |
+| [Display Layout](https://document.pleos.ai/docs/connect/guide/docs-design/getting-started/layout) | 앱 window와 Status bar·Driving view·GNB를 구분, 가로·세로 대응 | 차량 전체 해상도 대신 앱의 실제 가용 영역을 사용하고 시스템 패널에 가려질 때 상태 유지 |
+| [Window Policy](https://document.pleos.ai/docs/connect/guide/docs-design/getting-started/window) | Connect-S/W의 분할·실행·이동 정책과 window 전환 | 특정 분할 비율이나 처음 표시된 위치를 고정 전제로 삼지 않고 변경 후 재배치 시험 |
+| [Colors](https://document.pleos.ai/docs/connect/guide/docs-design/foundations/colors) | 기본·투명·정적 색상 및 배경·버튼·텍스트 등 역할별 색상 | 배경·표면·텍스트·선택·비활성·경고의 역할을 테마에 매핑. 최종 색상값은 자산 확인 후 확정 |
+| [Iconography](https://document.pleos.ai/docs/connect/guide/docs-design/foundations/contents-creation/iconography) | 기본 아이콘 제작 그리드 48×48dp, Filled/Outlined 표현 | 숫자 탭 대신 기능을 알아볼 수 있는 아이콘·라벨 적용 검토. 아이콘 그리드를 터치 영역 최소값으로 해석하지 않음 |
+| [Basic button](https://document.pleos.ai/docs/connect/guide/docs-design/components/actions/basic-button) | 라벨·선택적 아이콘 구조, Pressed·Disabled·Loading 상태 | 비동기 작업 중 피드백과 중복 실행 차단. 버튼 종류·여백·모서리·터치 영역은 자산과 대조 |
+| [Tabs](https://document.pleos.ai/docs/connect/guide/docs-design/components/segmented-menu) | Enabled·Pressed·Selected, Box/Line, 균등 배치와 왼쪽 정렬 옵션 | 콘텐츠 내부 탭의 역할과 선택 상태 정의. 이 문서를 모든 하단 내비게이션의 강제 대체 규격으로 해석하지 않음 |
+| [Page Navigation](https://document.pleos.ai/docs/connect/guide/docs-design/components/page-navigation) | 주요 메뉴와 하위 페이지의 Back 상태 구분 | 세 주요 화면과 상세·설정의 깊이를 구분하고 뒤로 복귀 상태를 보존 |
+| [System Popup](https://document.pleos.ai/docs/connect/guide/docs-design/components/popups/system-popup) | 제목·설명·본문·확인·취소, Large/Medium 및 버튼 정렬 옵션 | 획득·상세·동의·삭제 목적에 맞춰 내용과 액션 수를 제한하고 좁은 window에서 검증 |
+| [Toast](https://document.pleos.ai/docs/connect/guide/docs-design/components/toast) | 일시 알림의 배치·최대 폭 설명 | 지속 보관할 보상과 구분. 문서의 24·792·712 표기에는 단위가 명시되지 않아 dp로 확정하지 않음 |
+| [Animation](https://document.pleos.ai/docs/connect/guide/docs-design/foundations/animation) | 상태 전달용 로딩 표현과 옵션 | 일반 로딩 가이드를 주행 중 보상·고스트 애니메이션 허용 근거로 사용하지 않음 |
+
+공식 [버튼 크기 SVG](https://document.pleos.ai/assets/images/basic_size-033b09c8bbef4d1776a3f4c7c70a49d0.svg)를 시각 확인했다.
+Large·Medium·Small 예시는 있으나 숫자 치수·단위가 표시되지 않아 이미지 픽셀을 Android dp로 옮기지 않는다.
+텍스트로 확인한 컴포넌트 상태와 이미지에서 확인하지 못한 수치의 검증 상태를 구분한다.
+
+공식 소개 페이지는 [display guide .fig](https://document.pleos.ai/img/Pleos_Connect_display_guide_215.fig)와
+[design assets .fig](https://document.pleos.ai/img/Pleos_Connect_design_assets_215.fig)를 제공한다.
+링크 위치까지 확인했으며 Figma에서 파일을 열어 토큰·치수·간격을 추출하는 검증은 수행하지 않았다.
+이 파일들의 버튼·팝업·내비게이션 세부 수치를 확인한 뒤 팀의 디자인 기준을 확정해야 한다.
+
+### 6.3 화면별 적용안과 현재 구현 대조
+
+아래 배치는 기능명세서의 세 주요 화면과 팝업을 유지한 프로젝트 적용안이다. 공식 가이드가 이 앱의 화면 구성을 직접 지정한 것은 아니다.
+주행 중 노출은 3~4절의 카테고리·CarUxRestrictions 검토를 선행한다. 이 표는 구현 완료나 정책 허용 판정이 아니다.
+
+| 화면 | 현재 코드에서 확인한 상태 | portrait·좁은 window 적용안 | landscape·넓은 window 적용안 | 제한 상태와 검증 항목 |
+| --- | --- | --- | --- | --- |
+| S-01 탐험 지도 | MapScreen은 준비 문구·시작 버튼, RecordingScreen은 기록 중 안내 | 현재 위치·경로와 기록 상태를 우선하고 보조 조작을 최소화 | 동일한 핵심 정보를 유지하고 허용된 보조 정보만 확장 | 지도 조작 범위와 미확인 배지 허용 여부 확인, 주행 중 상세·연출 제한, 지도 대비·시스템 패널 가림 시험 |
+| S-02 뱃지 도감 | CollectionScreen은 준비 문구, 새 지역 그리드·칭호 UI 미구현 | 요약·지역/대학 구분·선택한 항목을 세로 흐름으로 제공 | 그리드와 선택 항목 상세를 함께 배치하는 안 검토 | 제한 전환 시 화면을 닫고 선택 상태 보존, 긴 라벨·미획득/선택 상태와 주야간 대비 확인 |
+| S-03 주행 기록 | ArchiveScreen은 기존 주행 목록·텍스트 상세·삭제 확인 | 목록→상세→비교의 Back 경로와 핵심 요약 우선 | 목록·요약·경로의 분할 배치를 검토하되 같은 정보 접근 보장 | 제한 중 상세·목록 접근 차단, 지도 로딩/기록 없음/삭제 실패 상태, 확대 글꼴에서 잘림 확인 |
+| P-01 획득 카드·P-02 뱃지 상세 | 기능명세에 정의되어 있고 신규 화면 구현은 대기 | 한 항목의 제목·핵심 내용·확인/닫기를 우선 | 불필요한 확대 없이 팝업 계층 유지 | 정차·규제 허용 조건에서만 노출하는 적용안, 제한 전환 시 카드 닫기와 미확인 큐 보존 시험 |
+| P-03 권한·동의 | ConsentScreen에 목적 설명·동의 버튼이 있음 | 목적·보관·철회 설명을 짧은 단위로 나누고 실제 줄 수 확인 | 같은 동의 내용을 유지하고 화면 폭만으로 긴 문장을 만들지 않음 | 규제 상태와 권한 거절·철회 시 흐름 검증. 첫 실행이라는 이유로 주행 제한을 우회하지 않음 |
+| P-04 설정·삭제 확인 | SettingsScreen·ExplorerApp에 스위치·철회·삭제 확인이 있음 | 라벨·스위치·확인/취소를 구분하고 터치 가능 폭 확보 | 관련 항목을 묶되 상호작용과 상태 의미 유지 | 설정 접근 제한, 처리 중 중복 입력 차단, 취소·실패·완료 피드백 검토 |
+
+현재 공통 UI는 MaterialTheme, 숫자 아이콘의 NavigationBar, 고정 여백과 글자 크기를 사용한다.
+ActionButton에는 비활성 인자가 있지만 별도 Loading 표현은 없으며, 오류 AlertDialog는 restricted 여부와 무관하게 표시된다.
+따라서 컴포넌트의 로딩·규제 전환·알림 노출, 테마·아이콘·반응형 배치를 구현 시 확인해야 한다.
+이 항목은 현재 코드에 대한 정적 확인이며 실제 화면의 대비·가독성·터치 적합성을 측정한 결과가 아니다.
+
+### 6.4 디자인 검증 산출물과 완료 조건
+
+1. 화면별 portrait/landscape 및 주·야간 설계와 적용 자산·토큰·버전·출처를 기록한다.
+2. 버튼·탭·팝업의 기본·눌림·선택·비활성·로딩과 빈 결과·실패·권한 거절 상태를 대조표로 남긴다.
+3. 대상 폼팩터별 실제 앱 window 크기·밀도·글꼴 배율, 글자 높이·대비·터치 영역·간격을 확인한다. mm와 dp/sp의 일괄 환산값은 가정하지 않는다.
+4. resize·시스템 패널·키보드·Back·규제 변경 후 콘텐츠와 입력 상태를 확인하고 화면별 검증 결과를 남긴다.
+5. 입력 피드백 지연과 장시간 지도 표시도 측정한다. 정책·기술·디자인 검증 결과를 각각 기록한 뒤 구현 완료로 판단한다.
+
+현재 완료된 범위는 공식 본문·버튼 크기 예시 확인과 코드·명세 대조다.
+Figma 자산 내부 수치 추출, 최종 토큰 결정, 화면 시안 제작, Emulator 실측은 미수행이다.
+디자인 분석을 보강하는 이번 문서 변경으로 UI 구현 작업을 재개하지 않는다.
+
+### 6.5 차량 입력·키보드
 
 [CCP 가이드](https://document.pleos.ai/docs/pleos-only/vehicle-app-developer-guide/ccp-rotary-controller-development)에 따르면 사용자 설치 앱의 CCP 지원은 선택이다.
 미지원 시 필수 기능을 터치로 완료할 수 있어야 하며 미지원 선언을 검토해야 한다. 최상위 Back의 숨김 처리 등 별도 동작 기준도 있다.
