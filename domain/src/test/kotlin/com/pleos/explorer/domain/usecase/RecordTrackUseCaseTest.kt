@@ -59,14 +59,22 @@ class RecordTrackUseCaseTest {
             sample(0.0, 0, Double.NaN) to LocationRejection.INVALID_VALUE,
             sample(0.0, -1) to LocationRejection.INVALID_VALUE,
             sample(0.0, 0).copy(point = GeoPoint(91.0, 127.0)) to LocationRejection.INVALID_VALUE,
+            sample(0.0, 0).copy(point = GeoPoint(Double.NaN, 127.0)) to LocationRejection.INVALID_VALUE,
+            sample(0.0, 0).copy(point = GeoPoint(36.0, 181.0)) to LocationRejection.INVALID_VALUE,
             sample(0.0, 0).copy(point = GeoPoint(36.0, Double.POSITIVE_INFINITY)) to
                 LocationRejection.INVALID_VALUE,
+            sample(0.0, 0).copy(timeMs = -1) to LocationRejection.INVALID_VALUE,
             sample(0.0, 0).copy(speedMps = -1.0) to LocationRejection.INVALID_VALUE,
+            sample(0.0, 0).copy(speedMps = Double.NaN) to LocationRejection.INVALID_VALUE,
+            sample(0.0, 0).copy(bearingDeg = -1.0) to LocationRejection.INVALID_VALUE,
+            sample(0.0, 0).copy(bearingDeg = Double.POSITIVE_INFINITY) to LocationRejection.INVALID_VALUE,
             sample(0.0, 0).copy(bearingDeg = 360.0) to LocationRejection.INVALID_VALUE,
         )
         cases.forEach { (input, reason) ->
             assertEquals(LocationValidation.Rejected(reason), validator.validate(input, null))
         }
+        assertTrue(validator.validate(sample(0.0, 0, 0.0).copy(speedMps = 0.0, bearingDeg = 0.0), null)
+            is LocationValidation.Accepted)
     }
 
     @Test
@@ -268,6 +276,8 @@ class RecordTrackUseCaseTest {
         assertTrue(crossing.size < 5)
         assertEquals(179.917, crossing.sumOf { it.distanceM }, 0.1)
         assertTrue(grid.split(GeoPoint(36.0, 180.0), GeoPoint(36.001, -180.0)).size < 5)
+        val reverse = grid.split(GeoPoint(36.0, -179.999), GeoPoint(36.0, 179.999))
+        assertEquals(crossing.sumOf { it.distanceM }, reverse.sumOf { it.distanceM }, 0.0001)
     }
 
     @Test
@@ -367,6 +377,51 @@ class RecordTrackUseCaseTest {
         assertThrows(IllegalArgumentException::class.java) { PathSimplifier().simplify(emptyList(), -1.0) }
         assertThrows(IllegalArgumentException::class.java) { GridProjector().neighbors("v2:0:0") }
         assertEquals(0.0, GeoDistance.meters(sample(0.0, 0).point, sample(0.0, 0).point), 0.0)
+    }
+
+    @Test
+    fun `diagonal grid crossings allocate distance once and retain reverse keys`() {
+        val grid = GridProjector()
+        val from = GeoPoint(35.9998, 126.9998)
+        val to = GeoPoint(36.0028, 127.0031)
+        val forward = grid.split(from, to)
+        val reverse = grid.split(to, from)
+        assertEquals(forward.map { it.gridKey }, reverse.map { it.gridKey }.reversed())
+        assertEquals(GeoDistance.meters(from, to), forward.sumOf { it.distanceM }, 0.00001)
+        assertTrue(forward.all { it.distanceM > 0 })
+        assertThrows(IllegalArgumentException::class.java) { grid.key(GeoPoint(Double.NaN, 0.0)) }
+        assertThrows(IllegalArgumentException::class.java) { grid.key(GeoPoint(0.0, 181.0)) }
+    }
+
+    @Test
+    fun `zero tolerance retains bends and long repeated input simplifies without recursion`() {
+        val points = listOf(sample(0.0, 0).point, GeoPoint(36.0001, 127.00001), sample(20.0, 0).point)
+        assertEquals(points, PathSimplifier().simplify(points, 0.0))
+        assertEquals(2, PathSimplifier().simplify(List(20_000) { sample(it * 0.1, 0).point }).size)
+        assertThrows(IllegalArgumentException::class.java) {
+            PathSimplifier().simplify(points, Double.NaN)
+        }
+    }
+
+    @Test
+    fun `partial reverse with different sample boundaries credits only uncovered length`() = runBlocking {
+        val (store, useCase) = fixture()
+        useCase.begin()
+        val positions = listOf(0.0, 30.0, 60.0, 40.0, 70.0, 100.0, 130.0, 160.0, 190.0, 220.0)
+        positions.forEachIndexed { i, m -> useCase.process("trip", "session", i.toLong(), sample(m, i * 1_000L)) }
+        useCase.finish("trip", 1_011_000)
+        assertEquals(260.0, store.snapshot.trip.distanceM, 0.001)
+        assertEquals(220.0, store.roads.values.sumOf { it.firstExploredDistanceM }, 0.001)
+    }
+
+    @Test
+    fun `empty trip can finish without manufacturing a location or a road`() = runBlocking {
+        val (store, useCase) = fixture()
+        useCase.begin()
+        val finished = useCase.finish("trip", 1_000_001)
+        assertEquals(TripStatus.DISCARDED, finished.snapshot.status)
+        assertTrue(store.points.isEmpty())
+        assertTrue(store.roads.isEmpty())
     }
 
     private class MemoryStore : TrackRecordingStore {
