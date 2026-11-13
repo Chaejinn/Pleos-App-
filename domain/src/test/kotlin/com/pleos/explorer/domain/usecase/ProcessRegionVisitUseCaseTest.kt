@@ -1,10 +1,17 @@
 package com.pleos.explorer.domain.usecase
 
 import com.pleos.explorer.domain.RegionTestFixtures.location
+import com.pleos.explorer.domain.RegionTestFixtures.point
 import com.pleos.explorer.domain.RegionTestFixtures.region
+import com.pleos.explorer.domain.engine.LocationValidator
 import com.pleos.explorer.domain.engine.RegionVisitDetector
+import com.pleos.explorer.domain.engine.TrackRecorder
 import com.pleos.explorer.domain.geo.IndexedRegionCatalog
 import com.pleos.explorer.domain.model.BadgeType
+import com.pleos.explorer.domain.model.GeoBounds
+import com.pleos.explorer.domain.model.GeoPoint
+import com.pleos.explorer.domain.model.LocationSample
+import com.pleos.explorer.domain.model.LocationValidation
 import com.pleos.explorer.domain.model.PendingReward
 import com.pleos.explorer.domain.model.RegionBadge
 import com.pleos.explorer.domain.model.RegionDefinition
@@ -13,6 +20,7 @@ import com.pleos.explorer.domain.model.RegionVisitSnapshot
 import com.pleos.explorer.domain.model.RegionVisitUpdate
 import com.pleos.explorer.domain.model.TripRegionVisit
 import com.pleos.explorer.domain.port.IdGenerator
+import com.pleos.explorer.domain.port.RegionCatalog
 import com.pleos.explorer.domain.port.RegionVisitStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
@@ -26,9 +34,13 @@ import java.io.IOException
 
 class ProcessRegionVisitUseCaseTest {
     private fun fixture(regions: List<RegionDefinition> = listOf(region("A"))): Pair<MemoryStore, ProcessRegionVisitUseCase> {
+        return fixture(IndexedRegionCatalog(regions))
+    }
+
+    private fun fixture(catalog: RegionCatalog): Pair<MemoryStore, ProcessRegionVisitUseCase> {
         val store = MemoryStore()
         var id = 0
-        return store to ProcessRegionVisitUseCase(store, RegionVisitDetector(IndexedRegionCatalog(regions)),
+        return store to ProcessRegionVisitUseCase(store, RegionVisitDetector(catalog),
             IdGenerator { "id-${++id}" })
     }
 
@@ -247,6 +259,75 @@ class ProcessRegionVisitUseCaseTest {
         assertFalse(requireNotNull(store.snapshot).sessionId.isBlank())
     }
 
+    @Test
+    fun `tick cannot discard delayed F03 approved locations or disconnect the shared stream`() = runBlocking {
+        listOf(1_500L, 10_000L).forEach { tickAt ->
+            val (store, useCase) = fixture()
+            useCase.begin()
+            var id = 0
+            val recorder = TrackRecorder(IdGenerator { "track-${++id}" })
+            var track = recorder.start("trip", 1_000_000, "session").snapshot
+            suspend fun approved(sequence: Long, northM: Double, elapsedMs: Long) {
+                val validation = LocationValidator().validate(LocationSample(1_000_000 + elapsedMs, elapsedMs,
+                    point(0.0, northM), null, null, 5.0), track.previous) as LocationValidation.Accepted
+                val update = recorder.process(track, validation, sequence, emptyMap())
+                useCase.process("session", sequence, RegionInput.Location(validation.location,
+                    update.connectedDistanceM, update.newSegment))
+                track = update.snapshot
+            }
+            approved(0, 0.0, 0)
+            useCase.process("session", 1, RegionInput.Tick(tickAt, 1_000_000 + tickAt))
+            approved(2, 25.0, 1_000)
+            assertEquals(25.0, requireNotNull(store.snapshot?.candidate).distanceM, 0.001)
+            approved(3, 50.0, 2_000)
+            assertEquals(track.trip.distanceM, requireNotNull(store.snapshot?.candidate).distanceM, 0.001)
+        }
+    }
+
+    @Test
+    fun `restart resets unqualified dwell while preserving entry identity`() = runBlocking {
+        val (store, useCase) = fixture()
+        useCase.begin()
+        (0..20).forEach { useCase.move(it.toLong(), 0.0, it * 5_000L) }
+        val entry = requireNotNull(store.snapshot?.candidate).entrySequence
+        useCase.resume("new-session")
+        (0..35).forEach { useCase.process("new-session", it.toLong(), RegionInput.Location(location(0.0, it * 5_000L), 0.0)) }
+        assertTrue(store.badges.isEmpty())
+        useCase.process("new-session", 36, RegionInput.Location(location(0.0, 180_000), 0.0))
+        assertEquals(entry, store.visits.values.single().entrySequence)
+    }
+
+    @Test
+    fun `startup and resume acknowledgement loss are safe to retry`() = runBlocking {
+        val (store, useCase) = fixture()
+        store.loseAcknowledgement = true
+        assertThrows(IOException::class.java) { runBlocking { useCase.begin() } }
+        useCase.begin()
+        useCase.move(0, 0.0, 0)
+        store.loseAcknowledgement = true
+        assertThrows(IOException::class.java) { runBlocking { useCase.resume("new-session") } }
+        val resumed = store.snapshot
+        useCase.resume("new-session")
+        assertEquals(resumed, store.snapshot)
+        assertTrue(store.badges.isEmpty())
+    }
+
+    @Test
+    fun `snapshot and catalog read failures propagate without advancing cursor`() = runBlocking {
+        val failingCatalog = object : RegionCatalog {
+            override fun findCandidates(point: GeoPoint): List<RegionDefinition> = throw IOException("catalog failed")
+            override fun findCandidates(bounds: GeoBounds): List<RegionDefinition> = throw IOException("catalog failed")
+        }
+        val (store, useCase) = fixture(failingCatalog)
+        useCase.begin()
+        val before = store.snapshot
+        assertThrows(IOException::class.java) { runBlocking { useCase.move(0, 0.0, 0) } }
+        assertEquals(before, store.snapshot)
+        store.failLoad = true
+        assertThrows(IOException::class.java) { runBlocking { useCase.resume("new-session") } }
+        assertEquals(before, store.snapshot)
+    }
+
     private class MemoryStore : RegionVisitStore {
         var snapshot: RegionVisitSnapshot? = null
         val badges = mutableMapOf<String, RegionBadge>()
@@ -254,10 +335,14 @@ class ProcessRegionVisitUseCaseTest {
         val rewards = mutableMapOf<String, PendingReward>()
         var failCommit = false
         var failBadges = false
+        var failLoad = false
         var cancelCommit = false
         var loseAcknowledgement = false
 
-        override suspend fun load(): RegionVisitSnapshot? = snapshot
+        override suspend fun load(): RegionVisitSnapshot? {
+            if (failLoad) throw IOException("snapshot read failed")
+            return snapshot
+        }
 
         override suspend fun findBadges(regionCodes: Set<String>): Map<String, RegionBadge> {
             if (failBadges) throw IOException("read failed")
