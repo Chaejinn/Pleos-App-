@@ -2,6 +2,8 @@
 
 확인일: 2026-11-13 · 문서 이슈: #5 · 상태: 분석 보고, 구현 재개 전 검토 필요
 
+재대조: 문서 커밋 `8613125`를 기준으로 공식 세부 API·심사 가이드와 다시 비교했다. 수정·추가 내역은 12절에 기록한다.
+
 ## 1. 목적과 검토 범위
 
 [공식 시작 가이드](https://document.pleos.ai/docs/pleos-only/getting-started)에서 연결되는 설계·디자인·개발·SDK·테스트·등록 가이드 중 이 프로젝트에 관련된 주요 문서를 검토했다.
@@ -23,6 +25,8 @@ PR #4도 보존하며 병합하지 않는다. 아래 적용 판단은 설계 변
 | 1 | Maps/Navigation 가이드는 게임 요소를 즉시 반려 항목으로 명시 | 탐험·뱃지·칭호·고스트를 포함한 앱을 지도 앱으로 자동 분류할 수 없음 | 실제 서비스 목적에 맞는 카테고리와 수집·보상 기능 허용 범위 확인 |
 | 1 | FusedLocation 1.1.3 공개 모델에는 confidence가 있지만 accuracyM 필드는 없음 | 명세·PR #4의 미터 단위 정확도 50m 검증과 연결 근거 미확인 | confidence 단위·의미, 미터 정확도의 공식 원천 또는 승인된 대체 기준 |
 | 1 | 주행 UX는 플랫폼 CarUxRestrictions 기준 | 현재 UI의 drive.running만으로는 규제 상태를 표현할 수 없음 | 플랫폼 규제 상태의 수신·실패 처리·기능별 제한 계약 |
+| 1 | SDK 이용 가능 안내와 Vehicle 퍼미션 심사 승인 기준은 별개 | Vehicle State의 신청 불필요를 배포 퍼미션의 승인 완료로 해석할 수 없음 | 사용하는 퍼미션 목록과 마켓 사전 협의·승인 범위 확인 |
+| 1 | 개인정보 심사 문서에 제공 취소 시 중단·삭제 기준 존재 | 현재 기록 동의 철회 후 기존 기록 보존 정책과 적용 범위 검토 필요 | 로컬 수집·이용·제3자 제공 동의 구분과 삭제 기준 확인 |
 | 2 | 저장 민감정보에는 앱 수준 암호화 필요 | 현재 평문 JSON 저장과 향후 Room 도입만으로 충족되지 않음 | 암호화 저장·키 관리·임시 파일·삭제·기존 데이터 이행 설계 |
 | 2 | portrait/landscape·분할 window 대응 필요 | 명세의 가로형 기준과 고정 화면 가정 보완 필요 | 화면별 적응형 배치와 폼팩터 시험 결과 |
 | 2 | 음성은 포커스·중단·재개 정책을 따라야 함 | 60초 간격과 사용자 ON/OFF만으로 허용 조건이 완성되지 않음 | 발화 용도에 맞는 컨텍스트, 포커스 상실·Suspend 처리와 실기기 시험 |
@@ -50,9 +54,14 @@ Maps/Navigation의 핵심 목적은 위치 기반 길 안내이고, Mobility Ser
 
 ### 프로젝트 적용 판단
 
-현재 서비스는 길 안내 자체보다 주행 기록과 탐험 수집이 중심이다. Maps/Navigation 또는 Mobility Services 중 어느 분류가 승인될지는 자료만으로 확정할 수 없다.
+현재 서비스는 길 안내 자체보다 주행 기록과 탐험 수집이 중심이다. Maps/Navigation·Mobility Services 등 어떤 분류가 승인될지는 자료만으로 확정할 수 없다.
 뱃지·칭호·고스트가 심사에서 게임 요소로 판단되는지도 별도 확인이 필요하다. 정차 후 표시로 옮기면 자동 허용된다고 단정하지 않는다.
 카테고리 확정 전에 APP_MAPS나 게임 카테고리를 임의 추가하지 않는다.
+
+선언 항목도 구분한다. [앱 카테고리](https://document.pleos.ai/docs/pleos-only/vehicle-app-planning-guide/app-category)의
+application `android:appCategory`는 Android 분류이며, 마켓의 서비스 카테고리와 동일한 값 체계가 아니다.
+Navigation 인텐트의 APP_MAPS, 마켓 등록 카테고리, 주행 중 사용을 위한 DO 선언은 각각의 목적·적용 조건을 확인한다.
+한 선언으로 다른 선언이나 정책 검증을 대체하지 않는다.
 
 [NaviHelper 소개](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/NaviHelper/intro)에서 확인한 역할은 기존 Navi Service에 목적지·경유지·경로·화면 요청을 보내고 정보를 받는 것이다.
 현재 의존성에 NaviHelper가 있다는 사실을 앱 내부 지도 렌더링 구현 완료로 취급할 수 없다.
@@ -73,8 +82,13 @@ DO 선언 자체가 모든 기능의 허용을 뜻하지 않는다.
 규제 연동 오류를 UI 허용으로 취급하지 않는 조건도 함께 정해야 한다.
 
 [앱 구조 및 동작 모델](https://document.pleos.ai/docs/pleos-only/vehicle-app-planning-guide/app-structure-screen-model)은 두 window, 방향·크기 변경, foreground/background 전환과 상태 복원을 요구한다.
-현재 매니페스트에는 screenOrientation이 별도 선언되지 않았다. 공식 설명에 따르면 기본 portrait 동작이므로 차량 전체 화면이 가로라는 이유만으로 앱도 가로라고 가정할 수 없다.
+현재 매니페스트에는 screenOrientation이 별도 선언되지 않았다. 구조 가이드는 미지정 시 portrait를 기본으로 설명하지만,
+최초 방향은 아래의 차종별 window 정책도 함께 확인해야 한다. 차량 전체 화면의 방향만으로 앱의 가용 영역을 결정하지 않는다.
 기능명세서의 가로형 화면 기준은 portrait·분할 window 지원을 포함하도록 보완할 대상이다.
+
+단, 위 portrait 설명은 구조 가이드의 일반 설명이다. [Window Policy](https://document.pleos.ai/docs/connect/guide/docs-design/getting-started/window)는
+Connect-S에서는 기존 앱의 방향을 따르고 Connect-W 신규 앱은 landscape의 primary window에서 실행된다고 구분한다.
+따라서 screenOrientation 미지정만으로 모든 차종의 최초 방향을 확정하지 않는다. S/W별 window 이동·크기 변경과 상태 복원을 시험한다.
 
 화면에서 사라짐, Activity 재생성, 서비스 중단, 프로세스 재시작, Suspend를 각각 시험한다.
 PR #4의 세션 resume는 프로세스 재시작 경로 단절을 위한 도메인 계약이며, 플랫폼 전원·서비스 수명주기 연결까지 구현된 것은 아니다.
@@ -98,7 +112,12 @@ Gradle 8 이상, API 34 이미지, Cold boot·RAM 4GB를 안내한다. [에뮬�
 마지막 위치 조회는 새 위치를 계산하지 않으므로, 반복 조회를 새 1초 관측으로 위장해서는 안 된다.
 
 현재 Gradle 캐시의 공식 FusedLocation-1.1.3.aar에서 classes.jar를 추출해 javap로 공개 API를 확인했다.
-이 검사는 소스 수정이나 SDK 교체 없이 수행했다. [LocationData API 페이지](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/FusedLocation/fused-location/ai.pleos.playground.location.fused.model/location-data/entry)는 확인했으나 웹 추출 본문에 필드별 설명이 노출되지 않아 단위 근거로 사용하지 않았다.
+이 검사는 소스 수정이나 SDK 교체 없이 수행했다. 재대조에서는 [LocationData API 페이지](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/FusedLocation/fused-location/ai.pleos.playground.location.fused.model/location-data/entry)를
+브라우저에서 실제 렌더링한 뒤 같은 6개 필드와 타입을 확인했다. 초기 웹 추출에서 비어 보인 본문을 API 부재로 판단하지 않았다.
+[confidence](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/FusedLocation/fused-location/ai.pleos.playground.location.fused.model/location-data/confidence),
+[heading](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/FusedLocation/fused-location/ai.pleos.playground.location.fused.model/location-data/heading),
+[timestampMillis](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/FusedLocation/fused-location/ai.pleos.playground.location.fused.model/location-data/timestamp-millis)의
+개별 페이지도 선언·타입은 표시하지만 미터 변환·방향 기준·시각 원점 설명은 확인되지 않아 해당 의미는 미확인으로 유지한다.
 
 | SDK 공개 접근자 | 확인한 타입 | 기존 명세·도메인과의 관계 |
 | --- | --- | --- |
@@ -130,6 +149,25 @@ FusedLocation의 isSupported와 AAOS property별 가용성 확인을 요구한�
 모든 SDK가 동일하게 승인 신청을 요구한다고 해석하지 않는다. 프로젝트의 현재 제공·신청·승인 상태는 저장소에서 확인할 수 없었다.
 에뮬레이터에서 호출 가능한 사실만으로 실제 배포 접근 권한까지 승인되었다고 가정하거나 API 접근 범위를 임의 확장하지 않는다.
 
+이용 가능 상태, OS 권한 부여, 마켓 승인, 차량 개인정보 설정을 다음처럼 각각 확인한다.
+
+| 구분 | 공식 근거·확인 사항 | 현재 코드·미확인 범위 |
+| --- | --- | --- |
+| SDK 이용 상태 | 프로젝트 안내의 SDK별 사용 가능·준비 중·신청 필요 구분 | 현재 계정·프로젝트 상태 미확인 |
+| OS 권한 | [FusedLocation 권한](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/FusedLocation/declaring-permissions)은 FUSED_LOCATION을 dangerous로 분류 | ReportActivity.requiredPermissions에서 해당 권한을 포함하고 위험 권한을 실행 중 요청함. 선언만 있고 요청 코드가 없다고 판단하지 않음. 실제 거절·재요청·철회 시험은 미수행 |
+| 배포 승인 | [기능·성능 심사](https://document.pleos.ai/docs/pleos-only/distribute/app-review-guide/review-functionality-performance-stability)는 Vehicle 퍼미션의 사전 협의·승인을 요구 | SDK 이용에 신청이 없다는 설명으로 퍼미션 승인도 불필요하다고 결론 내리지 않음. 실제 사용 목록과 승인 범위 확인 필요 |
+| 차량 개인정보 설정 | FusedLocation 권한 문서는 별도의 위치 접근 차단과 안내 팝업을 설명 | showLocationAccessBlockedPopup은 허용을 부여하는 API가 아님. OS 권한이 있어도 null·오류·차단 상태를 처리해야 함 |
+
+해당 권한 문서는 Android 일반 위치 권한 및 foreground/background 동작까지 보장하지 않는다.
+Google Fused Location의 동작을 Pleos FusedLocation의 보장으로 가져오지 않는다.
+[초기화·해제](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/FusedLocation/initialization-and-release)에 따라 리스너 해제와 release를 모두 수행하고,
+해제한 인스턴스를 재사용하지 않는다. 현재 PleosLocationSubscription의 순서는 기반으로 유지하되 초기화 실패·재시작에서도 정리되는지 시험한다.
+[오류 처리](https://document.pleos.ai/docs/pleos-only/connect-sdk-pleos/FusedLocation/error-handling)에 따라 null을 유효 위치로 바꾸지 않고 오류별 제한·재시도 가능성을 확인한다.
+
+[실행 환경 FAQ](https://document.pleos.ai/docs/pleos-only/vehicle-app-developer-guide/vehicle-app-faq)에 따르면 Build.DEVICE의 플랫폼 식별은 실차에서만 유효하다.
+에뮬레이터 폼팩터 시험과 실차 식별 분기 검증을 구분한다. 내비 탑재 여부 확인 방법은 공개되지 않았다고 안내하므로 임의의 탐지 API를 가정하지 않는다.
+속도는 같은 FAQ가 안내하는 PERF_VEHICLE_SPEED 사용을 현재 앱에서도 확인했다. 다만 클러스터 속도와 GPS 기반 계산 속도를 동일한 값으로 취급하지 않는다.
+
 ## 6. 디자인과 입력
 
 ### 6.1 공식 디자인 원칙과 수치
@@ -140,7 +178,7 @@ FusedLocation의 isSupported와 AAOS property별 가용성 확인을 요구한�
 | 항목 | 공식 기준 | 프로젝트의 확인 방법 |
 | --- | --- | --- |
 | 정보량 | 핵심 정보를 1~2초 안에 파악할 수 있도록 구성 | 위치·기록 상태와 상세 통계를 분리하고 화면별 우선순위 검토 |
-| 입력 피드백 | 입력 응답 0.25초 기준, 지연 시 처리 중임을 표시 | 탭·기록 시작·삭제의 즉시 피드백과 중복 입력 방지 확인 |
+| 입력 피드백 | 터치 피드백은 0.25초 기준이며 기능 동작 완료 시간과 구분 | 탭·기록 시작·삭제의 즉시 피드백과 중복 입력 방지 확인. 별도 2초·10초 기준은 9절 참조 |
 | 대비 | 텍스트·아이콘·이미지 대비 4.5:1 이상 | 최종 주·야간 색 조합과 지도 위 오버레이를 각각 측정 |
 | 글자 높이 | 중요 정보 5mm 이상, 보조 정보 3mm 이상 | 대상 디스플레이에서 실제 렌더링 크기·글꼴 배율 확인 |
 | 문장 길이 | 문장·단락은 3줄 이내 등 간결한 텍스트 지침 | 좁은 window에서 동의·오류·안내 문구의 줄바꿈 검토. 언어별 글자 수 규칙을 한국어에 임의 환산하지 않음 |
@@ -203,6 +241,10 @@ ActionButton에는 비활성 인자가 있지만 별도 Loading 표현은 없으
 4. resize·시스템 패널·키보드·Back·규제 변경 후 콘텐츠와 입력 상태를 확인하고 화면별 검증 결과를 남긴다.
 5. 입력 피드백 지연과 장시간 지도 표시도 측정한다. 정책·기술·디자인 검증 결과를 각각 기록한 뒤 구현 완료로 판단한다.
 
+[기능·성능 심사](https://document.pleos.ai/docs/pleos-only/distribute/app-review-guide/review-functionality-performance-stability)는
+해상도 전환 후 상태와 기능 접근을 유지하도록 한다. 6.3절의 넓은 화면 부가 정보는 배치·동시 노출의 확장안이며,
+같은 규제 상태의 좁은 화면에서 기능 자체를 제거한다는 의미가 아니다. 두 레이아웃에서 같은 작업에 도달할 수 있도록 검증한다.
+
 현재 완료된 범위는 공식 본문·버튼 크기 예시 확인과 코드·명세 대조다.
 Figma 자산 내부 수치 추출, 최종 토큰 결정, 화면 시안 제작, Emulator 실측은 미수행이다.
 디자인 분석을 보강하는 이번 문서 변경으로 UI 구현 작업을 재개하지 않는다.
@@ -247,6 +289,18 @@ PR #4의 TrackRecordingStore는 저장 인터페이스이므로 암호화 구현
 현재 동의·삭제 UI는 기반으로 유지하되, 운전자 교체 시 기록 분리·노출 정책과 보관 기간 이행을 확인한다.
 로컬 전용이라는 이유로 처리방침·위치정보 관련 제출 자료가 면제된다고 해석하지 않는다.
 
+### 동의 철회와 보존 정책의 재검토
+
+[사용자 개인정보·보안 심사](https://document.pleos.ai/docs/pleos-only/distribute/app-review-guide/review-user-privacy-security)는
+수집 항목·목적·보유기간·거부권 고지와 명시적인 동의를 요구하며, 개인정보 제공 취소 시 이용 경로 중단·저장 데이터 삭제를 안내한다.
+현재 ConsentScreen과 CONTRACTS.md·IMPLEMENTATION_RULES.md는 기록 저장 동의 철회 후 기존 기록을 보존하도록 정했다.
+이 보존 정책을 공식 기준과 대조하지 않은 채 배포 계약으로 확정해서는 안 된다.
+
+로컬 기록 수집·이용 동의와 제3자 제공 동의 중 어떤 철회에 어느 삭제 범위가 적용되는지 확인하고,
+원본·snapshot·격자·보상·파생 통계의 처리 범위를 정해야 한다. 현재 앱에 제3자 제공이 구현되어 있다고 가정하거나,
+관련 문구만으로 모든 종류의 철회에서 같은 삭제를 자동 실행하도록 코드를 바꾸지는 않는다.
+적용 범위를 확인한 후 동의 문구·계약·저장·삭제·테스트를 함께 수정하는 후속 작업이 필요하다.
+
 ## 9. 테스트 기준과 현재 증거의 한계
 
 [폼팩터 가이드](https://document.pleos.ai/docs/pleos-only/app-test-guide/form-factor-test-guide)는 별도 창의 Emulator,
@@ -259,6 +313,15 @@ Go 1.22 이상 Host Display Bridge와 FormFactorConsole을 사용한다. 8095/80
 주행 중 Navigation CPU 15% 이하, 비내비 앱 5% 미만, 정차 중 모든 앱 25% 이하, RAM 400MB 이하다.
 CPU 측정 방식·기간은 시험 계획에서 명시하며, 단위 테스트 시간이나 개발 PC 사용량으로 대체하지 않는다.
 
+[기능·성능 심사](https://document.pleos.ai/docs/pleos-only/distribute/app-review-guide/review-functionality-performance-stability)는
+터치 효과가 나타나기까지의 0.25초와, 버튼 기능 반응 2초·앱 실행 및 콘텐츠 로드 각각 10초를 구분한다.
+2초 안에 작업·콘텐츠 반응을 제공하지 못하면 진행 상태를 알려야 한다. 종료가 오래 걸리는 I/O를 0.25초 안에 완료하라는 뜻으로 혼합하지 않는다.
+설치·삭제, foreground 복귀 상태 보존, 호환성 모드·레터박스·화면 전환 시 기능 접근도 함께 확인한다.
+
+[ADB FAQ](https://document.pleos.ai/docs/pleos-only/vehicle-app-developer-guide/adb-command-reference-guide)는 주행 규제 ON/OFF 테스트 방법을 별도로 제공한다.
+테스트에서는 기어 변화뿐 아니라 실제 CarUxRestrictions 수신과 제한 UI 전환을 대조한다. 이번 분석에서는 설정·명령을 실행하지 않았다.
+폼팩터 가이드는 가상 디스플레이 제거 시 해당 앱이 강제 종료된다고 안내하므로, 제거 전 저장과 재실행 복원도 시험한다.
+
 | 검증 묶음 | 필요한 시나리오 | 이번 분석 상태 |
 | --- | --- | --- |
 | 도메인 | 정확도·도약·간격·공백·중복·저장 실패·복구 | PR #4의 기존 테스트 결과 참조. 실제 SDK 매핑 검증과 별개 |
@@ -268,7 +331,9 @@ CPU 측정 방식·기간은 시험 계획에서 명시하며, 단위 테스트 
 | 수명주기 | 다른 내비 전면, 백그라운드 기록, 재생성·강제 종료·복구·Suspend | 실행하지 않음 |
 | 음성 | 통화·음악·Gleo·안전 안내와 충돌, 거절·상실, 재개·첫 음절 | 실행하지 않음 |
 | 저장·보안 | 암호화·키·취소·원자성·삭제·보관 정리·이행 실패 | 저장 설계와 통합 시험 필요 |
+| 동의·보존 | 고지·거부·철회 유형·삭제 범위와 파생 데이터 처리 | 현재 보존 계약과 공식 심사 문구의 적용 범위 확인 필요 |
 | 성능 | 장시간 입력과 지도 표시, 메모리·CPU·불필요한 폴링 | 측정하지 않음 |
+| 완성도·호환성 | 설치·삭제, 0.25초 피드백/2초 반응/10초 실행·로딩, 화면 전환 후 기능 유지 | 측정·통합 시험 미수행 |
 
 기존 PR의 빌드·단위 테스트 통과를 Pleos 정책 준수·실차 호환·등록 가능 판정으로 확대하지 않는다.
 분석 문서만 변경하므로 이번에는 빌드·앱 실행·환경 설치를 다시 수행하지 않았다.
@@ -286,15 +351,54 @@ CPU 측정 방식·기간은 시험 계획에서 명시하며, 단위 테스트 
 [업데이트 가이드](https://document.pleos.ai/docs/pleos-only/app-registration-guide/app-update-guide)는 자동 업데이트 미지원과 개발사 구현 항목을 설명한다.
 디자인 소개의 OTA 고려 문구만으로 자동 업데이트가 제공된다고 단정하지 않는다.
 
+### 제출 자료의 구체적인 확인 항목
+
+다음은 [심사 제출](https://document.pleos.ai/docs/pleos-only/distribute/app-submission-guide)과
+[등록정보 심사](https://document.pleos.ai/docs/pleos-only/distribute/app-review-guide/review-app-registration-info)를 함께 읽어 보강한 목록이다.
+
+| 항목 | 확인할 기준·조건 |
+| --- | --- |
+| 패키지 | APK, 등록정보 심사는 압축 크기 600MB 미만으로 안내. 정식 서명·배포 설정도 확인 |
+| 아이콘 | PNG/JPEG, 512×512px, 최대 1MB |
+| 스크린샷 | 실제 주요 기능을 보여주는 최소 2장·최대 8장, 장당 최대 8MB, PNG/JPEG |
+| 이미지 규격 | 등록정보 심사에는 2560×1380·1700×1212·840×1212px. 제출 가이드는 마지막 규격을 840×121px로 표기하므로 두 문서가 불일치함. 해당 규격은 Console 또는 운영 측 확인 후 확정 |
+| 연령 등급 | 제출 가이드의 IARC 등급·증빙 준비. 국가별 추가 요건은 실제 카테고리·콘텐츠가 해당할 때 확인 |
+| 고지·지원 | 출시 언어별 이름·설명·정책 URL·위치정보 관련 약관, 지원 연락 수단, 출시 노트 |
+| 심사 접근 | 로그인 기능이 있으면 실제 사용자 수준의 심사용 계정 제공. 계정 기능이 없는 현재 앱에 새 로그인을 요구하는 뜻은 아님 |
+| 권리 증빙 | 지도·행정구역·대학 데이터, 폰트·아이콘·뱃지 등 사용 자산의 라이선스·허가를 확인하고 해당하는 증빙 준비 |
+
+[완성도 심사](https://document.pleos.ai/docs/pleos-only/distribute/app-review-guide/review-functionality-performance-stability)는
+더미·임시 콘텐츠를 제외하고 실제 서비스와 일치하는 앱을 제출하도록 한다.
+현재 지도·도감 준비 화면을 정식 마켓 심사 완료 기능으로 표시하지 않는다. 공모전 데모 입력·seed·영상 허용 범위와 배포본 포함 여부를 별도 확인한다.
+[콘텐츠 심사](https://document.pleos.ai/docs/pleos-only/distribute/app-review-guide/review-content-safety)는 위험 운전을 조장하는 콘텐츠와 권리 침해를 제한한다.
+뱃지·고스트·칭호 조건과 문구가 과속·경쟁·위험한 이동을 유도하지 않는지 데이터·문구 검토에 포함한다.
+
 ## 11. 개발 재개 순서
 
 1. 카테고리와 탐험·보상·고스트의 허용 범위부터 확인한다. 플랫폼 또는 공모전 운영 측의 공식 근거가 필요하다.
 2. FusedLocation confidence·heading·timestamp의 의미, 정확도 원천, 수신 주기와 차량 신호 지원을 확인한다.
-3. 결과에 따라 기능명세서의 적용 결정, 입력 계약, 플랫폼 UX 제한·음성·저장·화면 요구를 수정안으로 정리한다.
+3. Vehicle 퍼미션 승인, 동의 철회·보존·삭제 범위를 확인하고 기능명세서·입력 계약·플랫폼 UX·음성·저장·화면 요구를 수정안으로 정리한다.
 4. 기존 PR #4에서 유지할 부분과 수정할 부분을 확정한다. 도메인 계산 분리는 유지 가능하나, 정확도 계약과 실제 저장 연결은 재검토 대상이다.
 5. 사용자 검토 후 각 수정 작업의 이슈를 먼저 생성하고 해당 이슈 브랜치에서 구현한다. 채진·동현·현민의 소유 경계를 유지한다.
 6. 실제 SDK 입력 → 검증 → 암호화 저장 → 허용된 화면의 최소 흐름을 연결하고, 위 테스트 행렬과 제출 자료를 준비한다.
 
 현재 필요한 외부 확인은 카테고리·게임 요소 허용, confidence의 단위·정확도 대응, 프로젝트 SDK 사용 승인,
-공모전 전용 제출 기준이다. 저장소와 공개 가이드에서 확인되지 않은 답을 임의로 채우지 않는다.
+Vehicle 퍼미션 승인 범위, 동의 철회 시 삭제 범위, 불일치한 제출 이미지 규격, 공모전 전용 제출 기준이다.
+저장소와 공개 가이드에서 확인되지 않은 답을 임의로 채우지 않는다.
 이번 분석 완료를 기능 구현 재개 지시로 해석하지 않으며, PR #4와 후속 기능 작업은 검토 전까지 진행하지 않는다.
+
+## 12. 공식 가이드 재대조 기록
+
+| 항목 | 기존 문서의 누락·표현 | 재검토 결과와 반영 위치 |
+| --- | --- | --- |
+| 최초 화면 방향 | 기본 portrait 설명만으로 일반화 가능 | Connect-S/W 실행 정책 차이를 4절에 보완 |
+| 카테고리 선언 | Android 분류·Navigation 인텐트·마켓 분류가 혼동될 여지 | appCategory·APP_MAPS·마켓 카테고리·DO의 목적을 3절에서 분리 |
+| API 본문 | 웹 추출에서 LocationData 본문을 확인하지 못함 | 실제 렌더링·개별 필드 선언 확인. 단위·시각 원점은 여전히 미확인으로 5절에 기록 |
+| 권한·승인 | SDK 사용 가능 상태 중심의 요약 | dangerous 권한 요청·차량 위치 차단·Vehicle 퍼미션 심사 승인을 5절에 구분 |
+| 동의 철회 | 기존 기록 보존 정책과 공식 심사 문구 대조 누락 | 적용 범위가 필요한 보존·삭제 쟁점을 2·8·11절에 추가. 코드·기존 계약은 유지 |
+| 시간·기능 접근 | 0.25초 피드백과 전체 동작 시간 구분 부족 | 2초·10초, 설치·삭제·복귀, resize 후 기능 유지 기준을 6·9절에 보완 |
+| 제출 자료 | 아이콘·스크린샷·등급을 포괄적으로만 기록 | 수량·규격·IARC·권리·심사 접근을 10절에 구체화하고 공식 이미지 규격 불일치 표시 |
+| 검토 한계 | 문서 열람과 실제 정책 검증이 섞일 가능성 | 실제 API 본문은 확인했으나 Figma 내부 수치·계정 승인·실기기·폼팩터·성능 시험은 미수행으로 유지 |
+
+재대조로 공식 문서 간 불일치가 확인되어도 임의로 한쪽을 정답으로 고르지 않는다.
+기준 확정이 필요한 항목을 남기고, 이번 변경은 분석 문서에만 반영한다.
