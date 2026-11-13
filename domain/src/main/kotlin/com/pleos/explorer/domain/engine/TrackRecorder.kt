@@ -115,7 +115,8 @@ class TrackRecorder(
         val discarded = state.trip.distanceM < DetectionPolicy.MIN_TRIP_DISTANCE_M
         val path = if (discarded) emptyList() else (storedPoints + points).groupBy { it.pathSegmentId }
             .map { (id, values) -> PathSegment(id, simplifier.simplify(values.map { it.point })) }
-        val trip = state.trip.copy(endedAtMs = maxOf(atMs, state.trip.startedAtMs, state.previous?.timeMs ?: 0),
+        val lastApprovedAtMs = state.previous?.timeMs ?: storedPoints.lastOrNull()?.timeMs ?: 0L
+        val trip = state.trip.copy(endedAtMs = maxOf(atMs, state.trip.startedAtMs, lastApprovedAtMs),
             simplifiedPath = path)
         val next = flushed.copy(trip = trip, revision = state.revision + 1,
             status = if (discarded) TripStatus.DISCARDED else TripStatus.FINISHED,
