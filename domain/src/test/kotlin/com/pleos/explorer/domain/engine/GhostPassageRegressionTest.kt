@@ -52,9 +52,64 @@ class GhostPassageRegressionTest {
     fun `same speed revisit at exactly thirty days retains all six kilometers as eligible`() {
         val old = history("old", (0..250).map { it * 25.0 })
         val result = compare(old, listOf(old), 240, 25.0, 1_000, thirtyDaysMs)
-        val eligibleM = result.passages.filter { it.currentPassedAtMs - it.previousLastPassedAtMs >= thirtyDaysMs }
-            .sumOf { it.distanceM }
+        val eligibleM = result.passages.sumOf { it.revisitedDistanceM(thirtyDaysMs) }
         assertEquals(6_000.0, eligibleM, 0.001)
+    }
+
+    @Test
+    fun `thirty day boundary distinguishes one millisecond below equal and above`() {
+        val old = history("old", (0..30).map { it * 25.0 })
+        listOf(-1L, 0L, 1L).forEach { offset ->
+            val result = compare(old, listOf(old), 24, 25.0, 1_000, thirtyDaysMs + offset)
+            assertEquals("offset=$offset", if (offset < 0) 0.0 else 600.0,
+                result.passages.sumOf { it.revisitedDistanceM(thirtyDaysMs) }, 0.001)
+        }
+    }
+
+    @Test
+    fun `only the recently revisited spatial part is excluded from thirty day distance`() {
+        val old = history("old", (0..8).map { it * 100.0 }, 4_000)
+        val recent = history("recent", listOf(50.0, 75.0)).let { track ->
+            track.copy(points = track.points.map { it.copy(timeMs = it.timeMs + thirtyDaysMs - 86_400_000) })
+        }
+        val result = compare(old, listOf(old, recent), 6, 100.0, 4_000, thirtyDaysMs)
+        assertEquals(575.0, result.passages.sumOf { it.revisitedDistanceM(thirtyDaysMs) }, 0.001)
+        assertEquals(25.0, result.passages.filter { it.visits.any { visit -> visit.pastTripId == "recent" } }
+            .sumOf { it.distanceM }, 0.001)
+    }
+
+    @Test
+    fun `disconnected backward stationary and opposite heading originals cannot add recent dates`() {
+        val old = history("old", (0..8).map { it * 100.0 }, 4_000)
+        val recent = history("recent", listOf(50.0, 75.0))
+        val invalid = listOf(
+            recent.copy(points = recent.points.mapIndexed { index, point -> point.copy(sequence = index * 2L) }),
+            recent.copy(points = recent.points.mapIndexed { index, point -> point.copy(pathSegmentId = "s$index") }),
+            history("recent", listOf(75.0, 50.0)),
+            history("recent", listOf(50.0, 50.0), 5_000),
+            recent.copy(points = recent.points.map { it.copy(bearingDeg = 180.0) }),
+            recent.copy(points = recent.points.map { it.copy(bearingDeg = null) }),
+        )
+        invalid.forEach { track ->
+            val shifted = track.copy(points = track.points.map { it.copy(timeMs = it.timeMs + 1_000_000) })
+            val result = compare(old, listOf(old, shifted), 6, 100.0, 4_000, thirtyDaysMs)
+            assertEquals(0.0, result.passages.filter { it.visits.any { visit -> visit.pastTripId == "recent" } }
+                .sumOf { it.distanceM }, 0.0)
+        }
+    }
+
+    @Test
+    fun `circular headings and exact bearing limit retain the proper recent distance`() {
+        val old = history("old", (0..8).map { it * 100.0 }, 4_000)
+        listOf(359.0, 1.0, 45.0, 45.0001).forEach { bearing ->
+            val recent = history("recent", (0..8).map { it * 100.0 }, 4_000).let { track ->
+                track.copy(points = track.points.map { it.copy(bearingDeg = bearing, timeMs = it.timeMs + 1_000_000) })
+            }
+            val result = compare(old, listOf(old, recent), 6, 100.0, 4_000, thirtyDaysMs)
+            assertEquals("bearing=$bearing", if (bearing > 45 && bearing < 315) 0.0 else 600.0,
+                result.passages.filter { it.visits.any { visit -> visit.pastTripId == "recent" } }
+                    .sumOf { it.distanceM }, 0.001)
+        }
     }
 
     @Test
