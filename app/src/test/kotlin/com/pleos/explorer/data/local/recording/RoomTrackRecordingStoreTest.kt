@@ -119,4 +119,73 @@ class RoomTrackRecordingStoreTest {
         try { crypto.decrypt("snapshot:one", encrypted); fail("Tampered payload accepted") }
         catch (_: java.security.GeneralSecurityException) { }
     }
+
+    @Test fun storedApprovedLocationMustPassValidationAgain() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), RecordingDatabase::class.java)
+            .allowMainThreadQueries().build()
+        val crypto = cipher()
+        val store = RoomTrackRecordingStore(db, crypto)
+        val useCase = engine(store)
+        useCase.start("trip", location(0).timeMs, "session")
+        useCase.process("trip", "session", 0, location(0))
+        val entry = requireNotNull(db.entries().get("snapshot:trip"))
+        val json = org.json.JSONObject(String(crypto.decrypt(entry.id, entry.payload)))
+        json.getJSONObject("previous").put("accuracyM", 500)
+        db.entries().put(RecordingEntry(entry.id, crypto.encrypt(entry.id, json.toString().toByteArray())))
+        try { store.load("trip"); fail("Invalid persisted location trusted") }
+        catch (error: com.google.gson.JsonSyntaxException) {
+            assertTrue(generateSequence<Throwable>(error) { it.cause }.any {
+                it is IllegalStateException && it.message == "Invalid stored location"
+            })
+        }
+        db.close()
+    }
+
+    @Test fun deletingTripPreservesRoadTotalsAndClearsTripReferences() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), RecordingDatabase::class.java).build()
+        val store = RoomTrackRecordingStore(db, cipher())
+        val useCase = engine(store)
+        useCase.start("trip", location(0).timeMs, "session")
+        (0..25).forEach { useCase.process("trip", "session", it.toLong(), location(it)) }
+        val keys = requireNotNull(store.load("trip")).pendingRoads.keys
+        useCase.finish("trip", location(26).timeMs)
+        val distance = store.findRoads(keys).values.sumOf { it.firstExploredDistanceM }
+        store.deleteTrip("trip")
+        assertNull(store.load("trip"))
+        assertTrue(store.loadPoints("trip").isEmpty())
+        assertTrue(store.listSnapshots().isEmpty())
+        val roads = store.findRoads(keys)
+        assertEquals(distance, roads.values.sumOf { it.firstExploredDistanceM }, 0.001)
+        assertTrue(roads.values.all { it.firstTripId == null })
+        db.close()
+    }
+
+    @Test fun settingsDeleteAllClearsBothEncryptedAndLegacyRecords() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val db = Room.inMemoryDatabaseBuilder(context, RecordingDatabase::class.java).build()
+        val store = RoomTrackRecordingStore(db, cipher())
+        engine(store).start("trip", location(0).timeMs, "session")
+        context.filesDir.resolve("trips.json").writeText("[]")
+        context.filesDir.resolve("dex.json").writeText("{}")
+        com.pleos.explorer.data.repository.LegacyReportRepository(context) { store }.deleteAll()
+        assertNull(store.load("trip"))
+        assertTrue(store.listSnapshots().isEmpty())
+        assertFalse(context.filesDir.resolve("trips.json").exists())
+        assertFalse(context.filesDir.resolve("dex.json").exists())
+        db.close()
+    }
+
+    @Test fun inputSourceIsPersistedAndRemovedWithDiscardedTrip() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), RecordingDatabase::class.java).build()
+        val crypto = cipher()
+        val store = RoomTrackRecordingStore(db, crypto)
+        val useCase = engine(store)
+        useCase.start("trip", location(0).timeMs, "session")
+        store.setInputSource("trip", RecordingInputSource.ANDROID_GPS)
+        val restored = RoomTrackRecordingStore(db, crypto)
+        assertEquals(RecordingInputSource.ANDROID_GPS, restored.inputSources(listOf("trip"))["trip"])
+        useCase.finish("trip", location(1).timeMs)
+        assertEquals(RecordingInputSource.UNKNOWN, restored.inputSources(listOf("trip"))["trip"])
+        db.close()
+    }
 }

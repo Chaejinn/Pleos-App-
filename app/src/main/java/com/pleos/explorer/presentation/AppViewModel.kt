@@ -16,7 +16,16 @@ class AppViewModel(
     private val settingsRepository: SettingsRepository,
     private val driveStatus: DriveStatus,
     private val reports: LegacyReportRepository,
+    private val uxAccessGate: com.pleos.explorer.platform.ux.UxAccessGate,
+    private val mapPreferences: com.pleos.explorer.data.repository.MapPreferences? = null,
 ) : ViewModel() {
+    val onlineMapEnabled = mapPreferences?.enabled ?: MutableStateFlow(false).asStateFlow()
+    fun setOnlineMap(enabled: Boolean) {
+        val repository = mapPreferences ?: return
+        if (!enabled || (canInteract() && settings.value.recordingConsentGranted))
+            change(allowRestricted = !enabled) { repository.setEnabled(enabled) }
+    }
+    val uxAccess = uxAccessGate.state
     val settings = settingsRepository.settings
     val drive = driveStatus.state
     private val mutableReport = MutableStateFlow(LegacyReport())
@@ -45,10 +54,11 @@ class AppViewModel(
     }
 
     fun deleteAll() {
-        if (drive.value.running || drive.value.finishing || drive.value.deleting) return
+        if (!canInteract()) return
         driveStatus.deleting = true
         viewModelScope.launch {
             try {
+                if (!uxAccess.value.canShowDetails) return@launch
                 reports.deleteAll()
                 mutableReport.value = LegacyReport()
                 driveStatus.clearChannels()
@@ -59,21 +69,47 @@ class AppViewModel(
         }
     }
 
-    fun setConsent(granted: Boolean) = change { settingsRepository.setRecordingConsent(granted) }
+    fun setConsent(granted: Boolean) {
+        if (!granted || canInteract()) change(allowRestricted = !granted) { settingsRepository.setRecordingConsent(granted) }
+    }
     fun deleteTrip(id: String) {
-        if (drive.value.running || drive.value.finishing || drive.value.deleting) return
+        if (!canInteract()) return
         driveStatus.deleting = true
         viewModelScope.launch {
-            try { reports.deleteTrip(id); loadReport() }
+            try {
+                if (!uxAccess.value.canShowDetails) return@launch
+                reports.deleteTrip(id); loadReport()
+            }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { mutableError.value = "주행 삭제를 완료하지 못했어요" }
             finally { driveStatus.deleting = false }
         }
     }
-    fun setTts(enabled: Boolean) = change { settingsRepository.setTtsEnabled(enabled) }
-    fun clearError() { mutableError.value = null }
-    private fun change(action: suspend () -> Unit) {
+    fun setTts(enabled: Boolean) {
+        if (!enabled || canInteract()) change(allowRestricted = !enabled) { settingsRepository.setTtsEnabled(enabled) }
+    }
+    fun deleteRecording(id: String) = editRecording { reports.deleteRecording(id) }
+    fun finishInterrupted(id: String) = editRecording { reports.finishInterrupted(id) }
+    private fun editRecording(action: suspend () -> Unit) {
+        if (!canInteract() ||
+            !settings.value.recordingConsentGranted) return
+        driveStatus.deleting = true
         viewModelScope.launch {
+            try {
+                if (!uxAccess.value.canShowDetails) return@launch
+                action(); loadReport()
+            }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { mutableError.value = "기록 변경을 완료하지 못했어요" }
+            finally { driveStatus.deleting = false }
+        }
+    }
+    fun clearError() { mutableError.value = null }
+    private fun canInteract() = uxAccess.value.canShowDetails && !drive.value.running &&
+        !drive.value.finishing && !drive.value.deleting
+    private fun change(allowRestricted: Boolean = false, action: suspend () -> Unit) {
+        viewModelScope.launch {
+            if (!allowRestricted && !uxAccess.value.canShowDetails) return@launch
             try { action() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { mutableError.value = "설정을 저장하지 못했어요. 다시 시도해 주세요" }

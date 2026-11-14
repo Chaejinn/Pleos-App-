@@ -16,10 +16,14 @@ import com.pleos.explorer.R
 import com.pleos.explorer.di.AppGraph
 import com.pleos.explorer.data.repository.LegacyReportRepository
 import com.pleos.explorer.service.RoadLogService
+import com.pleos.explorer.platform.ux.CarUxRestrictionSource
+import com.pleos.explorer.platform.ux.NonAutomotiveUxSource
+import com.pleos.explorer.platform.ux.UxObservationSession
 
 class ReportActivity : ComponentActivity() {
     private val graph by lazy { AppGraph.from(this) }
     private var pendingMode: String? = null
+    private var uxSession: UxObservationSession? = null
     private val locationPermission = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
@@ -35,7 +39,11 @@ class ReportActivity : ComponentActivity() {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 require(modelClass.isAssignableFrom(AppViewModel::class.java))
                 @Suppress("UNCHECKED_CAST")
-                return AppViewModel(graph.settingsRepository, graph.driveStatus, LegacyReportRepository(this@ReportActivity)) as T
+                return AppViewModel(graph.settingsRepository, graph.driveStatus,
+                    LegacyReportRepository(this@ReportActivity,
+                        clearMapCache = { com.pleos.explorer.platform.map.MapCacheCleaner(applicationContext).clear() }
+                    ) { graph.trackRecordingStore },
+                    graph.uxAccessGate, graph.mapPreferences) as T
             }
         }
         val model = ViewModelProvider(this, factory)[AppViewModel::class.java]
@@ -46,7 +54,22 @@ class ReportActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        val source = if (packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
+            CarUxRestrictionSource(this)
+        } else NonAutomotiveUxSource()
+        uxSession = UxObservationSession(graph.uxAccessGate, source).also { it.start() }
+    }
+
+    override fun onStop() {
+        uxSession?.stop()
+        uxSession = null
+        super.onStop()
+    }
+
     private fun startDrive(mode: String) {
+        if (!graph.uxAccessGate.state.value.canShowDetails) return
         if (!graph.settingsRepository.settings.value.recordingConsentGranted) return
         if (graph.driveStatus.running || graph.driveStatus.finishing || graph.driveStatus.deleting) return
         if (mode == RoadLogService.MODE_VEHICLE &&
@@ -67,6 +90,9 @@ class ReportActivity : ComponentActivity() {
     }
 
     private fun launchDrive(mode: String) {
+        if (!graph.uxAccessGate.state.value.canShowDetails ||
+            !graph.settingsRepository.settings.value.recordingConsentGranted ||
+            graph.driveStatus.running || graph.driveStatus.finishing || graph.driveStatus.deleting) return
         try {
             startForegroundService(Intent(this, RoadLogService::class.java).putExtra(RoadLogService.EXTRA_MODE, mode))
         } catch (error: IllegalStateException) {
@@ -84,6 +110,7 @@ class ReportActivity : ComponentActivity() {
 
     private fun requiredPermissions(mode: String): List<String> {
         val permissions = mutableListOf<String>()
+        if (mode == RoadLogService.MODE_GPS_DEBUG) permissions += Manifest.permission.ACCESS_FINE_LOCATION
         if (graph.settingsRepository.settings.value.ttsEnabled &&
             packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
             permissions += "pleos.car.permission.TTS_SERVICE"

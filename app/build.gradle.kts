@@ -10,6 +10,15 @@ val releaseProperties = Properties().apply {
     val propertiesFile = rootProject.file(".local/release-signing.properties")
     if (propertiesFile.exists()) propertiesFile.inputStream().use { load(it) }
 }
+val kakaoProperties = Properties().apply {
+    val file = rootProject.file(".local/kakao.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val kakaoNativeAppKey = providers.environmentVariable("KAKAO_NATIVE_APP_KEY")
+    .orElse(kakaoProperties.getProperty("nativeAppKey", "")).get().trim()
+require(kakaoNativeAppKey.isEmpty() || kakaoNativeAppKey.matches(Regex("[A-Za-z0-9]+"))) {
+    "Invalid Kakao native app key format"
+}
 
 android {
     namespace = "com.pleos.explorer"
@@ -22,6 +31,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"$kakaoNativeAppKey\"")
         javaCompileOptions {
             annotationProcessorOptions {
                 arguments["room.schemaLocation"] = "$projectDir/schemas"
@@ -63,6 +73,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.kakaomap)
     implementation(libs.room.runtime)
     annotationProcessor(libs.room.compiler)
     implementation(libs.gson)

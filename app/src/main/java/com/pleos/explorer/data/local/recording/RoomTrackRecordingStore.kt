@@ -2,7 +2,9 @@
 
 import android.content.Context
 import androidx.room.Room
-import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonDeserializer
+import com.pleos.explorer.domain.engine.LocationValidator
 import com.pleos.explorer.domain.model.*
 import com.pleos.explorer.domain.port.TrackRecordingStore
 import kotlinx.coroutines.Dispatchers
@@ -14,7 +16,13 @@ class RoomTrackRecordingStore(
     private val database: RecordingDatabase,
     private val cipher: RecordingCipher,
 ) : TrackRecordingStore {
-    private val gson = Gson()
+    private val gson = GsonBuilder().registerTypeAdapter(ValidatedLocation::class.java,
+        JsonDeserializer<ValidatedLocation> { json, _, context ->
+            val sample = context.deserialize<LocationSample>(json, LocationSample::class.java)
+            val result = LocationValidator().validate(sample, null)
+            check(result is LocationValidation.Accepted) { "Invalid stored location" }
+            result.location
+        }).create()
     private val dao get() = database.entries()
 
     override suspend fun load(tripId: String): RecordingSnapshot? = withContext(Dispatchers.IO) {
@@ -33,7 +41,12 @@ class RoomTrackRecordingStore(
 
     override suspend fun commit(expectedRevision: Long?, update: TrackUpdate): Unit = withContext(Dispatchers.IO) {
         database.runInTransaction(Callable {
-            val next = update.snapshot
+            val proposed = update.snapshot
+            val next = if (proposed.status == TripStatus.DISCARDED) RecordingSnapshot(
+                trip = Trip(proposed.trip.id, proposed.trip.startedAtMs, proposed.trip.endedAtMs),
+                sessionId = proposed.sessionId, revision = proposed.revision,
+                lastInputSequence = proposed.lastInputSequence, status = TripStatus.DISCARDED,
+            ) else proposed
             val old = snapshot(next.trip.id)
             check(old?.revision == expectedRevision) { "Recording revision conflict" }
             check(next.revision == (expectedRevision?.plus(1) ?: 0L)) { "Invalid next revision" }
@@ -45,12 +58,47 @@ class RoomTrackRecordingStore(
             write("points:${next.trip.id}", allPoints)
             if (update.roads.isNotEmpty()) write("roads", roads.values.toList())
             write("snapshot:${next.trip.id}", next)
+            if (next.status == TripStatus.DISCARDED) dao.delete("source:${next.trip.id}")
             Unit
         })
     }
 
     suspend fun deleteAll(): Unit = withContext(Dispatchers.IO) {
         database.runInTransaction { dao.clear() }
+    }
+
+    suspend fun listSnapshots(): List<RecordingSnapshot> = withContext(Dispatchers.IO) {
+        dao.snapshots().map { requireNotNull(read(it.id, RecordingSnapshot::class.java)) }
+            .filter { it.status != TripStatus.DISCARDED }.sortedByDescending { it.trip.startedAtMs }
+    }
+
+    suspend fun setInputSource(id: String, source: RecordingInputSource): Unit = withContext(Dispatchers.IO) {
+        database.runInTransaction(Callable {
+            check(snapshot(id)?.status == TripStatus.ACTIVE) { "Recording is not active" }
+            write("source:$id", source.name)
+            Unit
+        })
+    }
+
+    suspend fun inputSources(ids: List<String>): Map<String, RecordingInputSource> = withContext(Dispatchers.IO) {
+        ids.associateWith { id ->
+            val value = read("source:$id", String::class.java)
+            RecordingInputSource.entries.firstOrNull { it.name == value } ?: RecordingInputSource.UNKNOWN
+        }
+    }
+
+    suspend fun deleteTrip(id: String): Unit = withContext(Dispatchers.IO) {
+        database.runInTransaction(Callable {
+            check(snapshot(id)?.status != TripStatus.ACTIVE) { "Cannot delete active recording" }
+            val roads = read("roads", Array<ExploredRoad>::class.java).orEmpty().map {
+                if (it.firstTripId == id) it.copy(firstTripId = null) else it
+            }
+            if (roads.isNotEmpty()) write("roads", roads)
+            dao.delete("snapshot:$id")
+            dao.delete("points:$id")
+            dao.delete("source:$id")
+            Unit
+        })
     }
 
     private fun snapshot(id: String) = read("snapshot:$id", RecordingSnapshot::class.java)?.also {

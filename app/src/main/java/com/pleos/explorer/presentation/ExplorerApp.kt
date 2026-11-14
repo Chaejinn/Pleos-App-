@@ -27,12 +27,14 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 import com.pleos.explorer.presentation.archive.ArchiveScreen
+import com.pleos.explorer.presentation.archive.RecordingArchiveScreen
 import com.pleos.explorer.presentation.collection.CollectionScreen
 import com.pleos.explorer.presentation.components.ActionButton
 import com.pleos.explorer.presentation.map.MapScreen
 import com.pleos.explorer.presentation.map.RecordingScreen
 import com.pleos.explorer.presentation.settings.ConsentScreen
 import com.pleos.explorer.presentation.settings.SettingsScreen
+import com.pleos.explorer.platform.ux.UxAvailability
 
 @Composable
 fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () -> Unit) {
@@ -40,16 +42,21 @@ fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () 
     val drive by model.drive.collectAsStateWithLifecycle()
     val report by model.report.collectAsStateWithLifecycle()
     val error by model.error.collectAsStateWithLifecycle()
+    val ux by model.uxAccess.collectAsStateWithLifecycle()
+    val onlineMapEnabled by model.onlineMapEnabled.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var confirmDeletion by rememberSaveable { mutableStateOf(false) }
-    val restricted = drive.running
+    val restricted = drive.running || !ux.canShowDetails
+    LaunchedEffect(restricted) {
+        if (restricted) { confirmDeletion = false; showSettings = false; tab = 0 }
+    }
     var wasRunning by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(drive.running, drive.finishing, settings.recordingConsentGranted) {
         if (drive.running) wasRunning = true
         else if (wasRunning && !drive.finishing) {
             wasRunning = false
-            if (settings.recordingConsentGranted) { tab = 2; showSettings = false }
+            if (settings.recordingConsentGranted && ux.canShowDetails) { tab = 2; showSettings = false }
         }
     }
 
@@ -63,7 +70,7 @@ fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () 
             } },
             dismissButton = { TextButton(onClick = { confirmDeletion = false }) { Text("취소", fontSize = 24.sp) } },
         )
-        if (error != null) AlertDialog(
+        if (error != null && !restricted) AlertDialog(
             onDismissRequest = model::clearError,
             title = { Text("확인이 필요해요", fontSize = 24.sp) },
             text = { Text(error.orEmpty(), fontSize = 24.sp) },
@@ -82,10 +89,15 @@ fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () 
             if (!restricted) content = content.verticalScroll(rememberScrollState())
             Column(content, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("로드로그", fontSize = 32.sp)
-                if (!settings.recordingConsentGranted) {
+                if (drive.running) {
+                    RecordingScreen(drive.mode, onStop, allowDebugStop = ux.canShowDetails, message = drive.message,
+                        drive = drive, onlineMapEnabled = onlineMapEnabled)
+                } else if (!ux.canShowDetails) {
+                    Text(if (ux.availability == UxAvailability.AVAILABLE)
+                        "주행 중에는 상세 화면을 볼 수 없어요. 정차 후 이용해 주세요."
+                    else "차량 상태를 확인하고 있어요. 확인될 때까지 상세 화면을 잠시 제한합니다.", fontSize = 24.sp)
+                } else if (!settings.recordingConsentGranted) {
                     ConsentScreen(drive.deleting, { model.setConsent(true) }, { confirmDeletion = true })
-                } else if (restricted) {
-                    RecordingScreen(drive.mode, onStop)
                 } else if (showSettings) {
                     SettingsScreen(
                         ttsEnabled = settings.ttsEnabled,
@@ -97,9 +109,14 @@ fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () 
                     )
                 } else {
                     when (tab) {
-                        0 -> MapScreen(drive.message, !drive.finishing && !drive.deleting, onStartDrive)
+                        0 -> MapScreen(drive.message, !drive.finishing && !drive.deleting, onStartDrive,
+                            onlineMapEnabled, model::setOnlineMap, report.recordings)
                         1 -> CollectionScreen(report.collection)
-                        2 -> ArchiveScreen(report.trips, !drive.finishing && !drive.deleting, model::deleteTrip)
+                        2 -> {
+                            RecordingArchiveScreen(report.recordings, report.inputSources, !drive.finishing && !drive.deleting,
+                                model::deleteRecording, model::finishInterrupted)
+                            ArchiveScreen(report.trips, !drive.finishing && !drive.deleting, model::deleteTrip)
+                        }
                     }
                     ActionButton("설정", onClick = { showSettings = true })
                 }

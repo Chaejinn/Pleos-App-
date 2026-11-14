@@ -12,12 +12,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.pleos.explorer.data.local.recording.RoomTrackRecordingStore
+import com.pleos.explorer.domain.model.RecordingSnapshot
 
 data class LegacyReport(val collection: String = "", val trip: String = "아직 주행 기록이 없어요",
-    val trips: List<com.pleos.explorer.domain.model.legacy.Trip> = emptyList())
+    val trips: List<com.pleos.explorer.domain.model.legacy.Trip> = emptyList(),
+    val recordings: List<RecordingSnapshot> = emptyList(),
+    val inputSources: Map<String, com.pleos.explorer.data.local.recording.RecordingInputSource> = emptyMap())
 
 /** 기존 데모 기록은 신규 Room 계약으로 옮기기 전까지 별도 읽기 모델로 유지한다. */
-class LegacyReportRepository(context: Context) {
+class LegacyReportRepository(context: Context, private val clearMapCache: suspend () -> Unit = {},
+    private val recordingStore: (() -> RoomTrackRecordingStore)? = null) {
     private val applicationContext = context.applicationContext
     private val operations = Mutex()
 
@@ -26,11 +31,27 @@ class LegacyReportRepository(context: Context) {
     } }
 
     suspend fun deleteAll() = operations.withLock { withContext(Dispatchers.IO) {
+        clearMapCache()
+        recordingStore?.invoke()?.deleteAll()
         listOf("trips.json", "dex.json").forEach { name ->
             val file = applicationContext.filesDir.resolve(name)
             check(!file.exists() || file.delete()) { "기록을 삭제하지 못했습니다" }
         }
     } }
+
+    suspend fun deleteRecording(id: String) = operations.withLock {
+        requireNotNull(recordingStore).invoke().deleteTrip(id)
+    }
+
+    suspend fun finishInterrupted(id: String) = operations.withLock {
+        val store = requireNotNull(recordingStore).invoke()
+        val engine = com.pleos.explorer.domain.usecase.RecordTrackUseCase(store,
+            com.pleos.explorer.domain.engine.TrackRecorder(com.pleos.explorer.domain.port.IdGenerator {
+                java.util.UUID.randomUUID().toString()
+            }))
+        engine.resume(id, java.util.UUID.randomUUID().toString())
+        engine.finish(id, System.currentTimeMillis())
+    }
 
     suspend fun load(): LegacyReport = operations.withLock { withContext(Dispatchers.IO) {
         val landmarks = LandmarkLoader.load(applicationContext)
@@ -43,11 +64,14 @@ class LegacyReportRepository(context: Context) {
         }
         val trips = TripStore(applicationContext).all().asReversed()
         val trip = trips.firstOrNull()
+        val recordingRepository = recordingStore?.invoke()
+        val recordings = recordingRepository?.listSnapshots().orEmpty()
+        val inputSources = recordingRepository?.inputSources(recordings.map { it.trip.id }).orEmpty()
         LegacyReport(collection, trip?.let { last -> buildString {
             append("최근 주행 ${last.segments.size}구간\n")
             last.segments.forEach { segment ->
                 append("${segment.index + 1}구간 · 급제동 ${segment.harshBrakes} · 급조향 ${segment.harshSteers} · 깜빡이 누락 ${segment.turnsWithoutSignal}\n")
             }
-        } } ?: "아직 주행 기록이 없어요", trips)
+        } } ?: "아직 주행 기록이 없어요", trips, recordings, inputSources)
     } }
 }

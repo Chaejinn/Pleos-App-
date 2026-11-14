@@ -11,6 +11,8 @@ import com.pleos.explorer.domain.port.IdGenerator
 import com.pleos.explorer.domain.usecase.RecordTrackUseCase
 
 class AppGraph(context: Context) {
+    val mapPreferences = com.pleos.explorer.data.repository.MapPreferences(context)
+    val uxAccessGate = com.pleos.explorer.platform.ux.UxAccessGate()
     private val applicationContext = context.applicationContext
     val trackRecordingStore by lazy { RoomTrackRecordingStore.create(applicationContext) }
     fun newTrackRecordingUseCase() = RecordTrackUseCase(trackRecordingStore,

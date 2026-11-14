@@ -20,6 +20,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeoutOrNull
+import com.pleos.explorer.platform.location.AndroidGpsSubscription
+import com.pleos.explorer.data.local.recording.RecordingInputSource
+import com.pleos.explorer.domain.model.GeoPoint
+import com.pleos.explorer.domain.model.LocationSample
+import com.pleos.explorer.domain.model.TripStatus
 import com.pleos.explorer.data.local.FileDexStore
 import com.pleos.explorer.data.catalog.LandmarkLoader
 import com.pleos.explorer.data.local.TripStore
@@ -57,6 +67,12 @@ class RoadLogService : Service() {
     private var ghost: GhostComparator? = null
     private var ghostChecked = false
     private var departure = DepartureGate()
+    private var replayActive = false
+    private var replayStopRequested = false
+    private var locationActive = false
+    private var locationStopRequested = false
+    private var gpsSubscription: AndroidGpsSubscription? = null
+    private var locationInputs: Channel<LocationSample>? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -80,6 +96,8 @@ class RoadLogService : Service() {
                     scheduler = SpeechScheduler(speaker::speak)
                 }
                 if (!settings.recordingConsentGranted && recorder != null) finishTrip()
+                if (!settings.recordingConsentGranted) replayStopRequested = true
+                if (!settings.recordingConsentGranted) stopLocationInput()
             }
         }
         scheduler = SpeechScheduler(speaker::speak)
@@ -102,12 +120,14 @@ class RoadLogService : Service() {
             return START_NOT_STICKY
         }
         if (intent?.action == ACTION_STOP) {
+            if (locationActive) { stopLocationInput(); return START_NOT_STICKY }
+            if (replayActive) { replayStopRequested = true; return START_NOT_STICKY }
             if (recorder != null) finishTrip() else stopSelf()
             return START_NOT_STICKY
         }
         if (driveStatus.running || driveStatus.finishing) return START_NOT_STICKY
         val mode = intent?.getStringExtra(EXTRA_MODE) ?: MODE_VEHICLE
-        if (mode !in setOf(MODE_VEHICLE, MODE_DEMO_ROUGH, MODE_DEMO_SMOOTH) ||
+        if (mode !in setOf(MODE_VEHICLE, MODE_DEMO_ROUGH, MODE_DEMO_SMOOTH, MODE_TRACK_REPLAY, MODE_GPS_DEBUG) ||
             (!BuildConfig.DEBUG && mode != MODE_VEHICLE)) {
             stopSelf()
             return START_NOT_STICKY
@@ -116,6 +136,15 @@ class RoadLogService : Service() {
         driveStatus.hasDeparted = false
         driveStatus.mode = mode
         driveStatus.clearChannels()
+        driveStatus.clearTrack()
+        if (mode == MODE_GPS_DEBUG) {
+            startGpsRecording()
+            return START_NOT_STICKY
+        }
+        if (mode == MODE_TRACK_REPLAY) {
+            startTrackReplay()
+            return START_NOT_STICKY
+        }
         driveStatus.message = if (mode == MODE_VEHICLE) "차량 연결 중 · 출발 신호를 기다려요" else "데모 주행 중"
         departure = DepartureGate()
         scheduler = SpeechScheduler(speaker::speak)
@@ -139,7 +168,130 @@ class RoadLogService : Service() {
         recorder = TripRecorder(id = java.util.UUID.randomUUID().toString())
     }
 
+    /** Synthetic observations have explicit accuracy; no Pleos confidence conversion is used. */
+    private fun startTrackReplay() {
+        replayActive = true
+        replayStopRequested = false
+        driveStatus.message = "검증 경로 재생 중 · 실제 차량 입력이 아닙니다"
+        serviceScope.launch {
+            try {
+                val useCase = withContext(Dispatchers.IO) { graph.newTrackRecordingUseCase() }
+                if (!graph.settingsRepository.settings.value.recordingConsentGranted || !hasLocationPermission()) {
+                    driveStatus.message = "위치 권한과 기록 저장 동의가 필요해요"
+                    return@launch
+                }
+                val tripId = java.util.UUID.randomUUID().toString()
+                val sessionId = java.util.UUID.randomUUID().toString()
+                val startedAtMs = System.currentTimeMillis()
+                useCase.start(tripId, startedAtMs, sessionId)
+                graph.trackRecordingStore.setInputSource(tripId, RecordingInputSource.REPLAY)
+                for (index in 0..30) {
+                    if (replayStopRequested || !graph.settingsRepository.settings.value.recordingConsentGranted ||
+                        !hasLocationPermission()) break
+                    val update = useCase.process(tripId, sessionId, index.toLong(), LocationSample(
+                        timeMs = startedAtMs + index * 1_000L, elapsedMs = index * 1_000L,
+                        point = GeoPoint(36.0 + index * 0.0001, 127.0), speedMps = 11.1,
+                        bearingDeg = 0.0, accuracyM = 5.0,
+                    ))
+                    driveStatus.updateTrack(update)
+                    delay(200)
+                }
+                driveStatus.finishing = true
+                val result = useCase.finish(tripId, System.currentTimeMillis())
+                driveStatus.message = if (result.snapshot.status == TripStatus.DISCARDED)
+                    "재생 종료 · 200m 미만 기록은 보관하지 않아요"
+                else "재생 경로를 저장했어요 · 주행 기록에서 확인해 주세요"
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                driveStatus.message = "경로 저장을 완료하지 못했어요 · 기록을 확인해 주세요"
+            } finally {
+                replayActive = false
+                driveStatus.running = false
+                driveStatus.finishing = false
+                notifyReport()
+                stopSelf()
+            }
+        }
+    }
+
     private var segmentTime = 0L
+
+    private fun stopLocationInput() {
+        locationStopRequested = true
+        gpsSubscription?.stop()
+        locationInputs?.close()
+    }
+
+    /** Debug-only manual recording; gear-based production Trip detection is separate. */
+    private fun startGpsRecording() {
+        locationActive = true
+        locationStopRequested = false
+        driveStatus.message = "위치 수신을 기다리고 있어요"
+        serviceScope.launch {
+            val input = Channel<LocationSample>(64)
+            locationInputs = input
+            val gps = AndroidGpsSubscription(this@RoadLogService)
+            gpsSubscription = gps
+            var tripId: String? = null
+            try {
+                val engine = withContext(Dispatchers.IO) { graph.newTrackRecordingUseCase() }
+                val sessionId = java.util.UUID.randomUUID().toString()
+                var sequence = 0L
+                var inputFailure: Exception? = null
+                if (!graph.settingsRepository.settings.value.recordingConsentGranted || !hasPreciseLocationPermission()) {
+                    driveStatus.message = "위치 권한과 기록 저장 동의가 필요해요"
+                    return@launch
+                }
+                gps.start(onSample = { sample ->
+                    if (input.trySend(sample).isFailure) {
+                        inputFailure = IllegalStateException("Location input queue full")
+                        input.close(inputFailure)
+                        gps.stop()
+                    }
+                }, onFailure = { error -> inputFailure = error; input.close(error); gps.stop() })
+                while (!locationStopRequested) {
+                    inputFailure?.let { throw it }
+                    if (!graph.settingsRepository.settings.value.recordingConsentGranted || !hasPreciseLocationPermission()) break
+                    val result = withTimeoutOrNull(250) { input.receiveCatching() } ?: continue
+                    val sample = result.getOrNull() ?: if (result.exceptionOrNull() != null)
+                        throw requireNotNull(result.exceptionOrNull()) else break
+                    if (locationStopRequested || !graph.settingsRepository.settings.value.recordingConsentGranted ||
+                        !hasPreciseLocationPermission()) break
+                    val id = tripId ?: java.util.UUID.randomUUID().toString().also {
+                        engine.start(it, sample.timeMs, sessionId)
+                        tripId = it
+                        graph.trackRecordingStore.setInputSource(it, RecordingInputSource.ANDROID_GPS)
+                    }
+                    if (locationStopRequested || !graph.settingsRepository.settings.value.recordingConsentGranted ||
+                        !hasPreciseLocationPermission()) break
+                    val update = engine.process(id, sessionId, sequence++, sample)
+                    driveStatus.updateTrack(update)
+                    driveStatus.message = if (update.validation is com.pleos.explorer.domain.model.LocationValidation.Accepted)
+                        "위치 기록 중 · 상세 정보는 정차 후 확인해 주세요" else "정확한 위치 수신을 기다리고 있어요"
+                }
+                gps.stop()
+                driveStatus.finishing = true
+                val completed = tripId?.let { engine.finish(it, System.currentTimeMillis()) }
+                driveStatus.message = when {
+                    completed == null -> "위치 수신 없이 종료했어요"
+                    completed.snapshot.status == TripStatus.DISCARDED -> "200m 미만 기록은 보관하지 않아요"
+                    else -> "위치 경로를 저장했어요 · 주행 기록에서 확인해 주세요"
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { driveStatus.message = "위치 기록을 완료하지 못했어요 · 위치 설정과 권한을 확인해 주세요" }
+            finally {
+                gps.stop()
+                input.cancel()
+                locationInputs = null
+                gpsSubscription = null
+                locationActive = false
+                driveStatus.running = false
+                driveStatus.finishing = false
+                notifyReport()
+                stopSelf()
+            }
+        }
+    }
 
     private fun onSignal(signal: VehicleSignal) {
         if (recorder == null) return
@@ -211,7 +363,12 @@ class RoadLogService : Service() {
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
 
+    private fun hasPreciseLocationPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
     override fun onDestroy() {
+        driveStatus.clearTrack()
+        gpsSubscription?.stop()
         serviceScope.cancel()
         source?.stop()
         if (::speaker.isInitialized) speaker.shutdown()
@@ -245,5 +402,7 @@ class RoadLogService : Service() {
         const val MODE_VEHICLE = "vehicle"
         const val MODE_DEMO_ROUGH = "demo_rough"
         const val MODE_DEMO_SMOOTH = "demo_smooth"
+        const val MODE_TRACK_REPLAY = "track_replay"
+        const val MODE_GPS_DEBUG = "gps_debug"
     }
 }
