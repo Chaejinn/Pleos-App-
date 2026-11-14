@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 8 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 9 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -11,7 +11,8 @@ F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #9에서 F-12 고스트 구간 판정·이력 조회·저장 포트를 구현했다. 실제 API는 9절을 따른다.
 이슈 #11에서 F-13 위치 기반 비교 결과·신규 거리 집계·보상 제안 포트를 구현했다. 실제 API는 10절을 따른다.
 이슈 #13에서 F-07 접수용 두 칭호 판정·저장·보상 제안 포트를 구현했다. 실제 API는 11절을 따른다.
-차량 상태기계·나머지 두 칭호·차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
+이슈 #15에서 F-02 주행 상태기계·신호 신선도·접근 제안과 F-03 경로 중단 API를 구현했다. 실제 API는 12절을 따른다.
+나머지 두 칭호·차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
 ## 1. 공통 표현
@@ -45,7 +46,7 @@ SDK 속도가 km/h이면 어댑터에서 `/ 3.6` 변환한다. 저장·계산에
 | `GeoPoint` | `latitudeDeg: Double`, `longitudeDeg: Double` |
 | `LocationSample` | `timeMs: Long`, `elapsedMs: Long`, `point: GeoPoint`, `speedMps: Double?`, `bearingDeg: Double?`, `accuracyM: Double?` |
 | `ValidatedLocation` | LocationSample의 필드. 단 accuracyM은 `Double`, 위치 검증·도약 검증 통과 후에만 생성 |
-| `VehicleSample` | `timeMs: Long`, `elapsedMs: Long`, `gear: Gear?`, `parkingBrakeEngaged: Boolean?`, `speedMps: Double?`, `odometerKm: Double?`, `steeringAngleDeg: Double?`, `brakePedalPressed: Boolean?`, `turnSignal: TurnSignal?`, `fuelUsedL: Double?`, `energyUsedKwh: Double?` |
+| `VehicleSample` | 후속 전체 차량 입력 규격. `timeMs: Long`, `elapsedMs: Long`, `gear: Gear?`, `parkingBrakeEngaged: Boolean?`, `speedMps: Double?`, `odometerKm: Double?`, `steeringAngleDeg: Double?`, `brakePedalPressed: Boolean?`, `turnSignal: TurnSignal?`, `fuelUsedL: Double?`, `energyUsedKwh: Double?`. 현재 F-02 입력은 12절의 TripVehicleSample |
 | `Gear` | `P`, `R`, `N`, `D`, `OTHER` |
 | `TurnSignal` | `OFF`, `LEFT`, `RIGHT`, `HAZARD` |
 | `Observation<T>` | `value: T`, `observedAtElapsedMs: Long`; 차량 필드는 관측 시각을 함께 유지 |
@@ -95,7 +96,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | 컴포넌트 | 호출 API | 반환·책임 |
 | --- | --- | --- |
 | `LocationValidator` | `validate(sample: LocationSample, previous: ValidatedLocation?): LocationValidation` | 구현됨. 상태를 내장하지 않고 전달받은 마지막 승인 위치 기준으로 검사 |
-| `TripStateMachine` | `process(input: TripInput): TripTransition` | 차량·위치·타이머 입력으로 시작·일시중지·재개·종료·변화 없음 |
+| `TripStateMachine` | `process(state, input, sequence): TripLifecycleUpdate`, `resume(state, sessionId)` | 구현됨. 주행 생명주기·UI 접근 제안·승인 위치 전달 여부. 12절 참조 |
 | `TrackRecorder` | `process(state, validation, inputSequence, knownRoads): TrackUpdate` | 구현됨. 변경 제안만 반환하며 실제 타입·시작·종료·복구는 7절 참조 |
 | `RecordTrackUseCase` | `suspend start/process/resume/finish` | 구현됨. F-03 전용 입출력 조합, 저장 성공 후 반환 |
 | `RegionVisitDetector` | `process(state, input, inputSequence): RegionVisitUpdate` | 구현됨. 상태 변경·방문 제안만 계산하며 저장은 하지 않음. 8절 참조 |
@@ -115,8 +116,8 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | 보조 타입 | 필드·의미 |
 | --- | --- |
 | `DriveInput` | `Location(sample)`, `Vehicle(sample)`, `Tick(elapsedMs, timeMs)`, `ConsentChanged(granted)` 중 하나 |
-| `TripInput` | DriveInput 중 검증된 위치·차량·타이머. 동의는 UseCase 진입에서 차단 |
-| `TripTransition` | `Started(trip)`, `Paused(atMs)`, `Resumed(atMs)`, `Ended(atMs)`, `Unchanged` |
+| `TripInput` | 구현됨. Vehicle·Location·Tick·AccessChanged. 수집은 앱에서 동의·권한 확인 후 시작하고 상태기계도 재차 차단. 12절 참조 |
+| `TripTransition` | 구현됨. Started·Paused·Resumed·Ended 목록. 변화 없음은 빈 목록. 12절 참조 |
 | `TrackUpdate` | `snapshot: RecordingSnapshot`, `points: List<TrackPoint>`, `roads: Map<String, ExploredRoad>`, `connectedDistanceM: Double`, `newSegment: Boolean`, `validation: LocationValidation?`; 7절 참조 |
 | `RegionInput` | `Location(location, connectedDistanceM, newSegment)`, `Tick(elapsedMs, timeMs)`, `ContinuityLost`, `TripStarted(tripId)`, `TripEnded`, `TripDetached(tripId)`; 8절 참조 |
 | `VisitQualified` | `regionCode: String`, `tripId: String?`, `entrySequence: Long`, `qualifiedAtMs: Long`; Trip 없는 정차 방문도 표현 |
@@ -238,9 +239,14 @@ recording.finish(tripId, endedAtMs)
 필터링으로 저장하지 않은 승인 위치도 Accepted로 반환하므로 후속 F-05·F-12 입력에 사용할 수 있다.
 
 `TrackRecorder`는 `start(tripId, startedAtMs, sessionId)`, `requiredGridKeys(state, location)`,
-`process(state, validation, inputSequence, knownRoads)`, `resume(state, sessionId)`, `finish(state, atMs, storedPoints)`를 제공한다.
+`process(state, validation, inputSequence, knownRoads)`, `interrupt(state, inputSequence)`,
+`resume(state, sessionId)`, `finish(state, atMs, storedPoints)`를 제공한다.
 UseCase가 검증을 한 번 수행하고 필요한 과거 격자를 읽은 뒤 recorder에 전달한다. recorder 자체는 I/O와 commit을 하지 않는다.
 `IdGenerator.newId()`로 segment ID와 point ID를 발급하며, 거리가 아닌 `TrackPoint.sequence`로 원본 순서를 정렬한다.
+
+버전 9의 interrupt는 ACTIVE 상태·새 sequence를 요구한다. 미저장 마지막 승인점을 flush하고
+revision·lastInputSequence를 갱신한 뒤 continuityBroken=true를 제안한다. 위치 검증 결과는 null,
+연결 거리는 0이다. 주차 브레이크 같은 비위치 중단을 가짜 GPS 거절로 만들지 않는다. 기존 process·resume·finish는 보존한다.
 
 ### TrackRecordingStore 구현 조건
 
@@ -638,3 +644,90 @@ PendingReward·다음 snapshot을 한 트랜잭션으로 반영한다. 처음에
   테스트의 in-memory 저장소는 Room·프로세스 종료 시 전달 보장을 검증한 구현체가 아니다.
 - Trip 삭제로 이미 받은 칭호·지역 뱃지 개수·누적 성취를 줄이지 않는다. 보존할 칭호/보상의 tripId만 null로 해제한다.
   전체 삭제는 획득 ID·칭호·보상·진행 snapshot을 함께 초기화하고 동의·설정은 유지한다.
+
+## 12. F-02 주행 생명주기 API와 앱 연결 계약
+
+이슈 #15의 구현은 순수 상태기계다. SDK·Android 서비스·입력 큐·Room·CarUxRestrictions와 범용
+ProcessDriveInputUseCase는 구현하지 않았다. UI 접근 값은 도메인의 제한 제안이며 플랫폼 허용을 대신하지 않는다.
+
+```kotlin
+val machine = TripStateMachine(idGenerator)
+val state = TripLifecycleSnapshot(sessionId)
+val proposed = machine.process(state, input, sequence)
+val recovered = machine.resume(committedState, newSessionId)
+```
+
+### 입력과 신선도
+
+| 타입 | 실제 필드·의미 |
+| --- | --- |
+| TripVehicleSample | timeMs·elapsedMs, gear: Gear? = null, parkingBrakeEngaged: Boolean? = null, speedMps: Double? = null |
+| VehicleCapabilities | gear·parkingBrake·speed의 SignalSupport, 기본 UNKNOWN. SUPPORTED·UNSUPPORTED와 구별 |
+| TripInput.Vehicle | sample, capabilities: VehicleCapabilities? = null. metadata 미전달이면 기존 지원 여부 유지 |
+| TripInput.Location | validation: LocationValidation, elapsedMs, timeMs. Accepted의 위치 시각과 인자 시각 일치 필요 |
+| TripInput.Tick | elapsedMs·timeMs. 위치 수신과 독립적으로 평가 |
+| TripInput.AccessChanged | recordingConsentGranted·locationPermissionGranted·elapsedMs·timeMs |
+
+- 차량 값은 같은 시각에 관측된 필드만 묶는다. 필드 값이 null이면 그 필드의 관측 시각을 갱신하지 않는다.
+  값을 실제로 받으면 해당 지원 여부는 SUPPORTED다. UNSUPPORTED metadata와 값 동시 전달은 거절한다.
+  지원 여부 변경은 기존 해당 관측을 제거하며, 일시 미수신을 UNSUPPORTED로 바꾸지 않는다.
+  capabilitiesAtElapsedMs는 지원 metadata와 차량 값 수신 근거의 최종 단조 시각이다. 이보다 이전이거나
+  5초 초과 지연/동의 승인 전인 metadata로 최신 관측을 지우지 않는다.
+- 시각·속도는 음수·NaN·Infinity를 거절한다. 같은 세션의 sequence 이하 재전달은 빈 이벤트로 반환한다.
+  제어 입력 Tick·AccessChanged는 처리 시각 역순을 거절하지만, 늦은 SDK 관측은 처리 시각의 최댓값에서 평가한다.
+  필드별 차량 관측과 위치 관측 순서를 따로 유지하고 과거 값으로 최신 값을 덮지 않는다.
+- 관측 나이가 5초 이하일 때만 판단 근거다. UI 신선도 규칙을 주행 타이머·시작 버퍼에도 적용하여
+  미수신 구간을 지속 시간으로 채우지 않는다. 정확히 5초는 포함하며 5초 초과 지연 관측은 사용하지 않는다.
+  동의·권한 승인 시각보다 이전인 관측도 사용하지 않는다.
+  수집 큐는 현재 단조 시계의 Tick을 1초 수준으로 공급하며 위치 콜백에 종속시키지 않는다.
+- 여러 신선한 속도 중 하나라도 양수면 정지로 판정하지 않는다. 지원되는 차량 신호의 관측이 만료되면
+  새 P/브레이크만으로 PARKED를 허용하지 않고 UNKNOWN이다. 양수 속도·신호 모순은 RESTRICTED다.
+  P 또는 주차 브레이크 체결이 신선하고 모순이 없을 때 PARKED, 두 신호가 모두 UNSUPPORTED일 때만
+  신선한 0속도가 10초 이어지는 대체 조건을 제안한다. 실제 화면 노출에는 플랫폼 규제를 추가 적용한다.
+
+### 상태와 이벤트
+
+TripLifecycleSnapshot은 sessionId·revision·lastInputSequence·처리 시각 lastElapsedMs, 위치 관측 시각
+lastLocationElapsedMs, accessGrantedAtElapsedMs, recordingState·tripId?, recordingSinceElapsedMs?,
+동의·권한, capabilities·capabilitiesAtElapsedMs, 필드별 gear·parkingBrake·vehicleSpeed·locationSpeed Observation,
+startCandidate?, stoppedSinceElapsedMs?, startBlocked, uiAccess를 가진다.
+
+TripLifecycleUpdate는 다음 snapshot·transitions·breakContinuity·recordCurrentLocation이다.
+
+- IDLE에서 신선한 D/R이면 Started(trip, bufferedLocations)를 제안한다. 첫 관측 D/R도 포함하고,
+  RECORDING의 D↔R·D→N→D는 같은 Trip이다. P는 Ended(tripId, atMs, PARK)다.
+- 주차 브레이크 true는 Paused(tripId, atMs), 신선한 해제 또는 브레이크 미지원과 주행 확인은 Resumed다.
+  같은 Trip ID를 유지한다. D/R 시작과 브레이크 체결이 함께 있으면 Started 뒤 Paused 두 이벤트가 나온다.
+- 기어가 UNSUPPORTED일 때만 승인 위치 속도 5km/h 이상을 30초 확인한다. 중간 저속·속도 결측·위치 거절·
+  5초 초과 공백·기어 지원 여부 변경·동의 철회는 시작 후보를 비운다. 차량 속도만으로 승인 경로를 만들지 않는다.
+  Started.trip.startedAtMs는 후보 첫 승인 위치 시각이며 bufferedLocations는 현재 위치까지 포함한 원본 순서 목록이다.
+- startCandidate.locations는 동의·권한 승인 후 메모리에만 보류한다. 시작 전 DB·파일에 직렬화하지 않는다.
+  시작 제안이 실제 저장되면 해당 목록을 F-03에 한 번 재생한다. 저장 실패 때는 다음 입력 없이 같은 제안을 재시도한다.
+- 신선한 속도 0이 5분이면 STATIONARY 종료다. 계속 들어오는 같은 D/R·0속도로 즉시 새 Trip을 만들지 않는다.
+  새 Trip 시작 시 정지 기간도 그 경계에서 다시 시작하고, 시작 전 P 대기 시간을 종료 타이머에 합치지 않는다.
+  새 비주행 기어 이후 D/R 또는 새로운 이동 증거 이후 D/R로 재시작하며, 기어 미지원이면 새 30초 시작 조건을 확인한다.
+- 동의 또는 위치 권한이 철회되면 ACCESS_REVOKED로 종료하고 후보·센서 관측을 제거한다. 기존 기록 삭제는 하지 않는다.
+  소요 시간은 elapsedMs로 계산하여 벽시계 역전과 분리한다. F-03 종료 벽시각 보정은 7절을 따른다.
+- resume는 Trip ID를 유지하되 PAUSED, 후보·관측·단조 시각·입력 cursor를 비운다. 동의·권한도 현재 상태를
+  다시 확인할 때까지 false다. 이는 사용자 설정을 변경하는 동작이 아니다. 새 승인과 관측 뒤 재개하며 같은 세션 resume는 무변경이다.
+- ERROR는 저장 실패를 상위에서 표시할 상태이며, 상태기계에 넣어 다음 입력을 진행하지 않는다.
+  오류 해결 후 마지막 commit 상태를 다시 읽는다. 중복 입력을 포함해 snapshot 기본 일관성을 검증한다.
+
+### F-03 연결·저장 순서
+
+1. Started로 F-03을 시작한다. bufferedLocations가 있으면 먼저 원래 단조 시각 순서로 한 번 처리한다.
+   시작을 확정한 현재점도 목록에 있으므로 같은 점을 따로 추가하지 않는다. 원본 시각·좌표·정확도를 변경하지 않는다.
+2. Paused에서는 TrackRecorder.interrupt로 꼬리를 flush하고 경로를 끊는다. F-12에는 실제 ContinuityLost를 보낸다.
+   같은 Trip을 종료하거나 가짜 LocationRejection을 만들지 않는다. 각 F-03/F-12 revision을 F-13에 함께 전달한다.
+3. recordCurrentLocation=true일 때만 현재 Accepted 위치를 F-03에 전달한다. pause 중·마지막 재개 이전의 지연 위치·
+   중복·오래된 위치는 false다. 실제 위치 거절의 F-03 전달은 이 승인 플래그와 별개다.
+4. Resumed가 현재 위치에서 발생하면 중단 상태를 먼저 확인한 뒤 그 위치를 기록한다. pause의 interrupt 또는
+   새 세션의 F-03 resume가 이미 continuityBroken=true를 만든 상태여야 한다. 같은 입력 sequence로 interrupt와
+   process를 두 번 호출하지 않는다. process 한 번으로 새 segment를 시작한다.
+5. Ended는 F-03 finish 및 F-12 종료로 연결한다. 200m 미만 폐기·신규 격자 확정은 기존 F-03이 판단한다.
+   정차 중 F-05에는 승인 위치를 계속 제공하되 주행 연결 거리를 늘리지 않는다.
+
+엔진은 I/O·commit·전역 가변 상태를 갖지 않는다. 반환 snapshot을 저장 전에 현재 상태로 교체하지 않는다.
+F-02·F-03·05·12·13·칭호·보상을 같은 DriveChangeSet으로 저장하는 조립은 후속 통합이다.
+저장 실패 시 원본 상태와 제안을 유지하고 재시도한다. 응답 유실 시 commit 상태를 다시 읽고 cursor로 중복을 막는다.
+새 세션 복구는 각 엔진의 resume 제안을 같은 저장 경계에서 적용한다. 순수 상태기계 테스트는 실제 Room 복구 검증이 아니다.
