@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 7 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 8 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -10,7 +10,8 @@ F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #7에서 F-05 지역 경계·방문·뱃지 제안과 저장 포트를 구현했다. F-05의 실제 API는 8절을 따르며,
 이슈 #9에서 F-12 고스트 구간 판정·이력 조회·저장 포트를 구현했다. 실제 API는 9절을 따른다.
 이슈 #11에서 F-13 위치 기반 비교 결과·신규 거리 집계·보상 제안 포트를 구현했다. 실제 API는 10절을 따른다.
-차량 상태기계·칭호·차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
+이슈 #13에서 F-07 접수용 두 칭호 판정·저장·보상 제안 포트를 구현했다. 실제 API는 11절을 따른다.
+차량 상태기계·나머지 두 칭호·차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
 ## 1. 공통 표현
@@ -104,7 +105,8 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `GhostResultBuilder` | `build(segment, history): GhostResult` | 구현됨. F-12 대응 구간의 날짜·표시 경로 계산 |
 | `GhostResultAssembler` | `process(state, input, history): GhostComparisonUpdate` | 구현됨. F-03 누적 신규 거리와 F-12 실제 경계 조합 |
 | `ProcessGhostComparisonUseCase` | `suspend start/process/resume` | 구현됨. F-13 이력 조회·결과·보상 저장 제안 조합. 10절 참조 |
-| `TitleEvaluator` | `evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified>` | 방문·종료·고스트 완료·지정 지점 진입 사실을 판정 |
+| `TitleEvaluator` | `evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified>` | 구현됨. 지역 뱃지·고스트 종료의 접수용 두 칭호 판정. 11절 참조 |
+| `ProcessTitleFactUseCase` | `suspend process(fact: AchievementFact): TitleUpdate` | 구현됨. 확정 개수 조회·최초 칭호·보상 저장 제안 조합. 11절 참조 |
 | `MetricsCollector` | `process(sample: VehicleSample, position: TrackPosition?): List<DrivingMetrics>` | 위치 연결 가능한 구간 지표 반환. 종료 때 미완료 구간 flush |
 | `ProcessDriveInputUseCase` | `suspend process(input: DriveInput): ProcessingOutcome` | 순서 조정, 포트 조회, 변경 묶음 저장, 상태 확정 |
 
@@ -120,13 +122,15 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `VisitQualified` | `regionCode: String`, `tripId: String?`, `entrySequence: Long`, `qualifiedAtMs: Long`; Trip 없는 정차 방문도 표현 |
 | `HistoricalTrack` | `tripId: String`, `points: List<TrackPoint>`; F-03이 확정한 sequence·segment 경계를 유지한 과거 후보 |
 | `GhostEvent` | `Started(id, pastTripId, atMs)`, `Updated(id, matchedDistanceM)`, `Finished(segment: GhostSegment)`; F-13 GhostResult는 후속 조합 |
-| `AchievementFact` | `BadgeGranted(badgeId, tripId, atMs)`, `TripFinished(tripId, atMs, newRoadM)`, `GhostFinished(result)`, `CoastEntered(coastId, tripId, atMs)` |
-| `AchievementProgress` | `regionBadgeCount: Int`, `newRoadDistanceM: Double`, `coastVisitsByDate`, `acquiredTitleIds: Set<String>` |
+| `AchievementFact` | 구현됨. `BadgeGranted(badgeId, tripId, atMs)`, `GhostFinished(result, atMs)`. 11절 참조 |
+| `AchievementProgress` | 구현됨. `regionBadgeCount: Int = 0`, `acquiredTitleIds: Set<String> = emptySet()` |
 | `TitleQualified` | `titleId`, `tripId`, `acquiredAtMs`, `conditionText` |
 | `TrackPosition` | `tripId`, `pathSegmentId`, `pointId`, `distanceFromTripStartM` |
 | `ProcessingOutcome` | `Applied`, `Rejected(reason)`, `Failed(error)`; Failed는 저장·데이터 읽기 장애 |
 
-`coastVisitsByDate`는 서울 날짜 문자열 → 동/서해 coast ID 집합이다. `TripFinished.newRoadM`은 해당 Trip의 신규 거리, AchievementProgress의 값은 과거 확정 누적이다. 같은 사실을 재처리해도 중복 반영되지 않아야 한다.
+후속 두 칭호의 `TripFinished(tripId, atMs, newRoadM)`·`CoastEntered(coastId, tripId, atMs)`와
+`newRoadDistanceM`·`coastVisitsByDate`는 아직 구현하지 않았다. 추후 서울 날짜별 해안 지점과 확정 신규 거리를
+추가하되 같은 사실의 재처리로 누적하지 않는다. 현행 두 칭호 API에 미구현 사실 타입을 빈 구현으로 추가하지 않는다.
 
 `VisitQualified`·`TitleQualified`는 획득 확정 사실이 아니라 저장 제안이다. DB 유니크 키로 신규 획득이 확인된 후에만 Reward·AchievementFact를 확정한다.
 
@@ -573,3 +577,64 @@ F-10 UI는 subjectId로 최신 결과를 조회한다. 큐의 소비·표시·ac
 commit 뒤 응답이 유실되어도 저장된 cursor로 결과·보상 중복을 막는다. Trip 삭제·전체 삭제는 비교 snapshot과 해당 결과도 제거하고,
 다른 Trip의 결과가 삭제한 과거 Trip을 참조하면 결과와 각 GhostPassageVisit의 pastTripId를 null로 해제한다.
 표시 경로·pathSegmentId·동일 위치 시각 쌍·날짜 요약은 보존한다.
+
+## 11. F-07 접수용 칭호 API와 앱 연결 계약
+
+이슈 #13의 구현은 REGION_EXPLORER·ROAD_REVISITOR 두 칭호다. UI·TTS·실제 Room과
+COAST_TO_COAST·NEW_ROAD_DISCOVERER는 후속 작업이다. F-03·05·12·13 판정과 기존 앱은 변경하지 않았다.
+
+### 사실 입력과 순수 판정
+
+`TitleEvaluator.evaluate(fact, progress): List<TitleQualified>`는 저장하지 않는 순수 판정이다.
+`TitleQualified(titleId, tripId: String?, acquiredAtMs, conditionText)`는 저장 제안이며,
+`AchievementTitle(titleId, conditionText, acquiredAtMs, tripId: String?)`가 영구 획득 모델이다.
+미지원 신호·속도·소요 시간·도착 순서를 조건에 넣지 않는다.
+
+| 입력 | 발생 근거·판정 |
+| --- | --- |
+| `AchievementFact.BadgeGranted(badgeId, tripId: String?, atMs)` | F-05 최초 BADGE 보상과 동일한 badgeId·Trip·시각. REGION이며 확정된 서로 다른 지역 뱃지 수가 30개 이상이면 REGION_EXPLORER |
+| `AchievementFact.GhostFinished(result: GhostResult, atMs)` | F-13 결과 최초 생성과 같은 고스트 종료 사실. `atMs`는 F-12 endedAtMs 또는 F-13 최초 GHOST_RESULT 보상의 occurredAtMs. 동일 결과의 30일 경과 거리 합이 5,000m 이상이면 ROAD_REVISITOR |
+
+- `AchievementProgress(regionBadgeCount = 0, acquiredTitleIds = emptySet())`의 개수는 F-05가 확정한
+  REGION 종류의 서로 다른 regionCode 수다. UNIVERSITY·visitCount·재방문 사실 수를 더하지 않는다.
+  이미 저장된 titleId는 다시 제안하지 않으며, 모든 입력은 이미 획득한 경우에도 먼저 검증한다.
+- BadgeGranted와 progress는 같은 입력 처리 경계다. 해당 뱃지 저장 후 개수를 읽고 F-07 처리가 끝나기 전에
+  다음 입력을 진행하지 않는다. 과거 BadgeGranted에 나중 입력의 개수를 결합하거나 미확정 뱃지를 세지 않는다.
+  획득 시각·Trip은 이 사실의 값이며, Trip 없는 정차 획득은 null이다.
+- GhostFinished는 단일 F-12 종료 구간이다. 서로 다른 고스트·Trip의 짧은 거리를 합쳐 5km를 만들지 않는다.
+  `result.passages.sumOf { it.revisitedDistanceM(DetectionPolicy.TITLE_REVISIT_AGE_MS) }`를 사용하고
+  표시용 요약 날짜 뺄셈·최초 방문일·newRoadM으로 대신하지 않는다. 30일은 30×24시간이며 정확히 경계부터 포함한다.
+- F-13 최초 결과는 이미 고스트 종료 사실이다. `finalized=false`는 이후 신규 거리의 미확정 상태이므로
+  칭호 판정을 Trip 종료까지 미루지 않는다. 이후 거리 갱신에는 GhostFinished를 새 사실로 발행하지 않는다.
+- passage는 sectionIndex 0부터 순서대로 각 section의 fraction 0..1을 중복·누락 없이 덮어야 하며,
+  거리 합이 matchedDistanceM과 1mm 안에서 일치해야 한다. 이 허용 오차를 5km 달성 기준에 더하지 않는다.
+  비정상 ID·음수 시각/개수·비정상 거리·중복 범위·현재 Trip을 과거로 쓴 근거는 거절한다.
+  visits 또는 passages가 없는 구버전 근거는 경과 거리 0m다. 과거 Trip 참조 해제만으로 날짜 근거를 없애지 않는다.
+
+### 저장·중복·실패와 통합
+
+```kotlin
+val titles = ProcessTitleFactUseCase(titleStore, idGenerator)
+titles.process(AchievementFact.BadgeGranted(badgeReward.subjectId, badgeReward.tripId, badgeReward.occurredAtMs))
+titles.process(AchievementFact.GhostFinished(result, ghostReward.occurredAtMs))
+```
+
+`TitleSnapshot(revision = 0, progress = AchievementProgress())`는 전역 칭호 상태다.
+`TitleUpdate(snapshot, titles = emptyList(), rewards = emptyList())`는 다음 상태와 최초 획득 제안이다.
+
+`TitleStore`는 `suspend load(): TitleSnapshot`, `suspend commit(expectedRevision: Long, update: TitleUpdate)`다.
+load는 확정 REGION 개수와 획득 ID를 일관된 snapshot으로 읽고, commit은 revision 비교·titleId 최초 삽입·
+PendingReward·다음 snapshot을 한 트랜잭션으로 반영한다. 처음에는 revision 0의 상태를 제공한다.
+새 REGION 획득도 이 snapshot의 revision 범위에 포함하여 오래된 개수로 계산한 저장을 거절해야 한다.
+실제 Room 구현체·migration은 없으며, 앱 저장 구현자가 이 조건을 구현한다.
+
+- 조건 미달·이미 획득이면 변경과 보상 없이 현재 snapshot을 반환하며 commit하지 않는다. 개수를 사실마다 증가시키지 않는다.
+- 신규 칭호마다 `TITLE:{titleId}` 유니크 키의 PendingReward 한 건을 제안한다. kind는 TITLE,
+  subjectId는 titleId, occurredAtMs·tripId는 AchievementTitle과 동일하다. 이미 확인한 보상을 초기화하지 않는다.
+- 저장 성공 전 메모리 상태를 확정하지 않는다. 조회/저장 실패·취소·revision 충돌은 상위로 전달하며 다음 입력을 멈춘다.
+  같은 사실로 재시도하고, 응답 유실 후에도 저장된 획득 ID로 보상 재발급을 막는다. 새 UseCase에도 같은 저장 상태를 주입한다.
+- 실제 앱 통합은 F-05/F-13 사실·칭호·보상을 하나의 DriveChangeSet에 조합해야 한다.
+  전용 UseCase를 연속 호출하는 것만으로는 원자적이지 않다. 별도 commit 시 원본 사실을 내구성 있게 재전달할 수 있어야 한다.
+  테스트의 in-memory 저장소는 Room·프로세스 종료 시 전달 보장을 검증한 구현체가 아니다.
+- Trip 삭제로 이미 받은 칭호·지역 뱃지 개수·누적 성취를 줄이지 않는다. 보존할 칭호/보상의 tripId만 null로 해제한다.
+  전체 삭제는 획득 ID·칭호·보상·진행 snapshot을 함께 초기화하고 동의·설정은 유지한다.
