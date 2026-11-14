@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 4 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 5 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -135,7 +135,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `LocationSource` | `samples(): Flow<LocationSample>`; 실제·재생 구현 모두 같은 형식 | 채진 |
 | `VehicleSource` | `samples(): Flow<VehicleSample>`; 미지원 신호는 null | 채진 |
 | `RegionCatalog` | `findCandidates(point: GeoPoint)` 및 `findCandidates(bounds: GeoBounds)`: `List<RegionDefinition>`; 점·선분 경계 상자 후보 | 구현 계약 동현, 파일 로더 채진, 데이터 현민 |
-| `HistoryRepository` | `suspend findNearby(gridKeys: Set<String>, excludedTripId: String): List<HistoricalTrack>` | 채진 |
+| `HistoryRepository` | `suspend findNearby(gridKeys: Set<String>, excludedTripId: String): List<HistoricalTrack>`, `suspend findForward(cursor: GhostCursor, maxDistanceM: Double): HistoricalTrack`; 9절 조회 계약 | 채진 |
 | `DriveStore` | `suspend loadSnapshot(): DriveSnapshot`, `suspend commit(changeSet: DriveChangeSet): CommitOutcome` | 채진 |
 | `ArchiveRepository` | `observeTrips(): Flow<List<Trip>>`, `suspend getTripDetail(tripId): TripDetail?`, `suspend deleteTrip(tripId)`, `suspend deleteAll()` | 채진 |
 | `RewardRepository` | `observePending(): Flow<List<PendingReward>>`, `suspend acknowledge(id, atMs)` | 채진 |
@@ -379,6 +379,25 @@ Trip이 없으면 firstTripId·보상 tripId는 null이며 dangling TripRegionVi
   timeMs는 벽시계이므로 그 차이로 수신 공백·속도·방향 순서를 다시 판정하지 않는다.
 - 데이터 오류·조회 실패는 예외다. 빈 이력은 정상적인 후보 없음이며 실패 대체값으로 사용하지 않는다.
 
+`HistoryRepository.findForward(cursor: GhostCursor, maxDistanceM: Double): HistoricalTrack`는
+활성 고스트의 마지막 일치 cursor 이후 복귀에 필요한 연속 원본을 거리 범위로 조회한다.
+현재 위치 주변 격자만으로는 미일치 구간의 중간 원본을 확보할 수 없으므로 별도 조회한다.
+
+- cursor와 같은 과거 Trip·pathSegmentId에서 cursor.from부터 sequence 순서로 반환한다.
+  거리 한도는 cursor의 보간 위치부터 과거 경로를 따라 측정하고, 한도에 도달하거나 처음 넘는 끝점까지 포함한다.
+- 실제 누락 sequence·segment 경계에서 중단한다. 삭제·정리로 원본이 없으면 같은 tripId의 빈 HistoricalTrack을 반환한다.
+  누락을 메우거나 전체 Trip을 무조건 읽는 대체 처리를 하지 않는다. 조회 오류는 예외로 전달한다.
+- UseCase는 활성 미일치 거리가 0보다 크고 현재 입력이 이전 승인점과 연결될 때 한 번만 추가 조회한다.
+  한도는 `mismatchedDistanceM + connectedDistanceM + 2 × 30m`다. 후보별·포인트별 조회는 하지 않는다.
+  중복 입력·10초 이상 공백·newSegment·ContinuityLost·TripEnded에는 이전 cursor의 추가 조회가 없다.
+- 주변 결과와 합칠 때 원본 `(tripId, sequence)`와 모든 필드를 보존한다. 두 조회의 동일 원본은 한 번만 유지한다.
+  다른 Trip 반환·정렬 오류·중복 Trip·동일 sequence의 상충 원본은 commit 전에 실패로 전달한다.
+  조회 간 데이터가 바뀌면 다음 입력으로 넘어가지 않고 같은 입력을 재시도한다.
+
+기존 findNearby 시그니처는 유지한다. 버전 5부터 HistoryRepository 구현체는 findForward도 구현해야 한다.
+현재 실제 Room 구현체는 없으며, 테스트 저장소만 두 조회를 구현한다. Room 어댑터 연결 시 이 범위 조회와
+`(tripId, sequence)` 인덱스를 함께 구현한다. GhostSnapshot 모델은 변경하지 않았다.
+
 `GhostMatcher`는 인접 원본 사이를 선형 보간하고 현재점과의 구면 거리 30m 이하,
 현재 방향과 양 끝 과거 방향의 원형 차이 45도 이하를 검사한다. 방향 미확인은 후보에서 제외한다.
 `GhostCursor(from, to, fraction)`는 원본 두 점과 0..1 보간 비율을 보존한다. 현재 Trip은 판정에서도 재차 제외한다.
@@ -396,7 +415,7 @@ Trip이 없으면 firstTripId·보상 tripId는 null이며 dangling TripRegionVi
 | --- | --- |
 | `GhostSnapshot` | tripId·sessionId·revision·lastInputSequence·previous·candidates·active·finished |
 | `GhostProgress` | cursor·firstLocation·lastMatchedLocation·matchedDistanceM·mismatchedDistanceM·sections·id? |
-| `GhostKey` | 과거 tripId와 pathSegmentId. 서로 다른 후보의 거리를 합치지 않음 |
+| `GhostKey` | 과거 tripId와 pathSegmentId. 같은 키에 여러 반복 회차 후보가 있을 수 있음 |
 | `GhostSection` | currentFrom/currentTo 승인 관측, pastFrom/pastTo cursor, 인정 distanceM |
 | `GhostSegment` | id·tripId·pastTripId·matchedDistanceM·startedAtMs·endedAtMs·sections |
 | `GhostInput` | Location(location, connectedDistanceM, newSegment), ContinuityLost, TripEnded |
@@ -405,6 +424,12 @@ Trip이 없으면 firstTripId·보상 tripId는 null이며 dangling TripRegionVi
 F-03과 같은 승인 위치·연결 거리·newSegment를 사용한다. F-03 Rejected는 ContinuityLost로 전달하고,
 중복 응답의 validation null은 새 입력으로 보내지 않는다. 별도로 가짜 정확도·방향·거리를 만들지 않는다.
 입력 연결 거리의 허용 오차는 F-05와 같은 1mm 또는 상대 오차 0.0001%다. 단절 입력 거리는 0이다.
+
+활성 전에는 같은 과거 Trip·segment 안에서 같은 위치를 여러 번 통과한 회차도 독립 후보로 유지한다.
+현재 위치와 일치하는 과거 edge를 sequence가 연속인 묶음으로 나누고 각 묶음의 가장 가까운 대응점에서 시작한다.
+기존 후보는 각 묶음으로 독립 진행하며 서로 다른 회차의 거리를 합산하지 않는다.
+동일한 과거 cursor 위치에 도달한 후보끼리는 matchedDistanceM이 가장 큰 하나만 유지한다.
+edge 끝 fraction=1과 다음 edge 시작 fraction=0은 같은 위치로 취급한다.
 
 후보별 일치 거리가 500m 이상이면 Started를 한 번 제안하고 stable id를 발급한다.
 동시에 조건을 충족한 후보는 현재 대응 과거 시각이 최근인 순서, 동률이면 tripId·segment ID 사전순으로 선택한다.
