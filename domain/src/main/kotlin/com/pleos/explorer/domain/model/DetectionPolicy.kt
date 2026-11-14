@@ -15,4 +15,7 @@ object DetectionPolicy {
     const val GHOST_BEARING_DEG = 45.0
     const val GHOST_START_DISTANCE_M = 500.0
     const val GHOST_EXIT_DISTANCE_M = 200.0
+    const val TITLE_REGION_COUNT = 30
+    const val TITLE_REVISIT_DISTANCE_M = 5_000.0
+    const val TITLE_REVISIT_AGE_MS = 30L * 24 * 60 * 60 * 1_000
 }
