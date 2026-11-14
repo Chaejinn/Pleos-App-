@@ -10,6 +10,7 @@ import kotlin.math.abs
 class TitleEvaluator {
     fun evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified> {
         require(progress.regionBadgeCount >= 0 && progress.acquiredTitleIds.none { it.isBlank() })
+        require(progress.newRoadDistanceM.isFinite() && progress.newRoadDistanceM >= 0)
         val proposed = when (fact) {
             is AchievementFact.BadgeGranted -> {
                 val parts = fact.badgeId.split(':', limit = 2)
@@ -26,6 +27,14 @@ class TitleEvaluator {
                     distance >= DetectionPolicy.TITLE_REVISIT_DISTANCE_M) {
                     TitleQualified("ROAD_REVISITOR", fact.result.tripId, fact.atMs,
                         "마지막 통과에서 30일 이상 지난 고스트 구간 5km 이상 재주행")
+                } else null
+            }
+            is AchievementFact.TripFinished -> {
+                require(fact.tripId.isNotBlank() && fact.atMs >= 0)
+                require(fact.newRoadM.isFinite() && fact.newRoadM >= 0 &&
+                    fact.newRoadM <= progress.newRoadDistanceM + 0.001)
+                if (progress.newRoadDistanceM >= DetectionPolicy.TITLE_NEW_ROAD_DISTANCE_M) {
+                    TitleQualified("NEW_ROAD_DISCOVERER", fact.tripId, fact.atMs, "처음 기록된 도로 누적 100km 탐험")
                 } else null
             }
         }

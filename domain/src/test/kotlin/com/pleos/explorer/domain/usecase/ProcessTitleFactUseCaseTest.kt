@@ -158,4 +158,43 @@ class ProcessTitleFactUseCaseTest {
         assertThrows(IllegalArgumentException::class.java) { runBlocking { useCase(store).process(badge) } }
         assertEquals(0, store.commits)
     }
+
+    @Test
+    fun `replayed completion never accumulates source distance before or after title acquisition`() = runBlocking {
+        val store = Store()
+        store.state = store.state.copy(progress = AchievementProgress(newRoadDistanceM = 99_000.0))
+        val useCase = useCase(store)
+        val fact = AchievementFact.TripFinished("previous", NOW_MS, 1_000.0)
+        repeat(40) { assertTrue(useCase.process(fact).titles.isEmpty()) }
+        assertEquals(99_000.0, store.state.progress.newRoadDistanceM, 0.0)
+        assertEquals(0, store.commits)
+        store.state = store.state.copy(progress = store.state.progress.copy(newRoadDistanceM = 100_000.0))
+        val next = fact.copy(tripId = "next", atMs = NOW_MS + 1)
+        val awarded = useCase.process(next)
+        assertEquals("NEW_ROAD_DISCOVERER", awarded.titles.single().titleId)
+        assertEquals("TITLE:NEW_ROAD_DISCOVERER", awarded.rewards.single().deduplicationKey)
+        repeat(40) { assertTrue(useCase.process(next).rewards.isEmpty()) }
+        assertTrue(useCase(store).process(next).rewards.isEmpty())
+        assertEquals(100_000.0, store.state.progress.newRoadDistanceM, 0.0)
+        assertEquals(1, store.commits)
+    }
+
+    @Test
+    fun `new road title write failure cancellation and lost response preserve one grant`() = runBlocking {
+        val store = Store()
+        store.state = store.state.copy(progress = AchievementProgress(newRoadDistanceM = 100_000.0))
+        val useCase = useCase(store)
+        val fact = AchievementFact.TripFinished("trip", NOW_MS, 300.0)
+        store.failCommit = true
+        assertThrows(IOException::class.java) { runBlocking { useCase.process(fact) } }
+        store.cancel = true
+        assertThrows(CancellationException::class.java) { runBlocking { useCase.process(fact) } }
+        assertTrue(store.titles.isEmpty() && store.rewards.isEmpty())
+        store.loseAck = true
+        assertThrows(IOException::class.java) { runBlocking { useCase.process(fact) } }
+        assertTrue(useCase(store).process(fact).titles.isEmpty())
+        assertEquals(1, store.titles.size)
+        assertEquals(1, store.rewards.size)
+        assertEquals(100_000.0, store.state.progress.newRoadDistanceM, 0.0)
+    }
 }
