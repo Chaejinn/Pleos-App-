@@ -11,6 +11,7 @@ import com.pleos.explorer.domain.engine.LocationValidator
 import com.pleos.explorer.domain.engine.TrackRecorder
 import com.pleos.explorer.domain.geo.GeoDistance
 import com.pleos.explorer.domain.geo.GridProjector
+import com.pleos.explorer.domain.model.GhostCursor
 import com.pleos.explorer.domain.model.GhostEvent
 import com.pleos.explorer.domain.model.GhostInput
 import com.pleos.explorer.domain.model.GhostSegment
@@ -44,6 +45,11 @@ class ProcessGhostInputUseCaseTest {
         var failHistory = false
         var failLoad = false
         var boundedHistory = false
+        var failForward = false
+        var forwardQueryCount = 0
+        var lastForwardLimitM = 0.0
+        var lastForwardPoints = emptyList<TrackPoint>()
+        var transformForward: (HistoricalTrack) -> HistoricalTrack = { it }
         var queriedKeys = emptySet<String>()
         var excludedTrip = ""
         private var id = 0
@@ -91,6 +97,26 @@ class ProcessGhostInputUseCaseTest {
                 }
                 track.copy(points = selected.sorted().map { track.points[it] })
             }
+        }
+        override suspend fun findForward(cursor: GhostCursor, maxDistanceM: Double): HistoricalTrack {
+            forwardQueryCount++
+            lastForwardLimitM = maxDistanceM
+            if (failForward) throw IOException("forward history read failed")
+            val stored = history.singleOrNull { it.tripId == cursor.key.tripId }?.points.orEmpty()
+            val start = stored.indexOfFirst { it.sequence == cursor.from.sequence }
+            if (start < 0) return HistoricalTrack(cursor.key.tripId, emptyList())
+            val result = mutableListOf(stored[start])
+            var remainingM = maxDistanceM + GeoDistance.meters(cursor.from.point, cursor.to.point) * cursor.fraction
+            for (index in start + 1..stored.lastIndex) {
+                val previous = result.last()
+                val next = stored[index]
+                if (next.pathSegmentId != cursor.key.pathSegmentId || next.sequence - previous.sequence != 1L) break
+                result.add(next)
+                remainingM -= GeoDistance.meters(previous.point, next.point)
+                if (remainingM <= 0.0) break
+            }
+            lastForwardPoints = result.toList()
+            return transformForward(HistoricalTrack(cursor.key.tripId, lastForwardPoints))
         }
         override suspend fun commit(expectedRevision: Long?, update: GhostUpdate) {
             if (failCommit) { failCommit = false; throw IOException("commit failed") }
@@ -468,12 +494,85 @@ class ProcessGhostInputUseCaseTest {
         val active = requireNotNull(f.state?.active)
         (22..28).forEach { f.approve(it.toLong(), it * 25.0, null) }
         assertEquals(175.0, requireNotNull(f.state?.active).mismatchedDistanceM, 0.001)
+        val queriesBeforeRecovery = f.forwardQueryCount
         f.approve(29, 700.0)
+        assertEquals(queriesBeforeRecovery + 1, f.forwardQueryCount)
+        assertEquals(235.0, f.lastForwardLimitM, 0.001)
+        assertTrue(f.lastForwardPoints.any { GeoDistance.meters(it.point, RegionTestFixtures.point(0.0, 550.0)) < 0.001 })
+        assertTrue(f.lastForwardPoints.size < f.history.single().points.size)
         assertEquals(active.id, f.state?.active?.id)
         assertEquals(0.0, requireNotNull(f.state?.active).mismatchedDistanceM, 0.0)
         assertEquals(active.matchedDistanceM, requireNotNull(f.state?.active).matchedDistanceM, 0.0)
         f.approve(30, 725.0)
         assertTrue(f.segments.isEmpty())
         assertEquals(active.matchedDistanceM + 25, requireNotNull(f.state?.active).matchedDistanceM, 0.001)
+    }
+
+    @Test
+    fun `forward read failure preserves state and retry recovers without duplicate events`() = runBlocking {
+        val f = Fixture(listOf(koreanHistory()))
+        f.boundedHistory = true
+        f.begin()
+        (0..21).forEach { f.approve(it.toLong(), it * 25.0) }
+        f.approve(22, 550.0, null)
+        val before = f.state
+        val events = f.events.toList()
+        f.failForward = true
+        assertThrows(IOException::class.java) { runBlocking { f.approve(23, 575.0) } }
+        assertEquals(before, f.state)
+        assertEquals(events, f.events)
+        assertTrue(f.segments.isEmpty())
+        f.failForward = false
+        f.approve(23, 575.0)
+        assertEquals(before?.active?.id, f.state?.active?.id)
+        assertEquals(0.0, requireNotNull(f.state?.active).mismatchedDistanceM, 0.0)
+        assertEquals(events, f.events)
+    }
+
+    @Test
+    fun `conflicting unsorted or wrong trip forward data fails before commit`() = runBlocking {
+        val corruptions: List<(HistoricalTrack) -> HistoricalTrack> = listOf(
+            { track -> track.copy(tripId = "unexpected") },
+            { track -> track.copy(points = track.points.reversed()) },
+            { track -> track.copy(points = track.points.map { it.copy(timeMs = it.timeMs + 1) }) },
+        )
+        corruptions.forEach { corrupt ->
+            val f = Fixture(listOf(koreanHistory()))
+            f.boundedHistory = true
+            f.begin()
+            (0..21).forEach { f.approve(it.toLong(), it * 25.0) }
+            f.approve(22, 550.0, null)
+            val before = f.state
+            val events = f.events.toList()
+            f.transformForward = corrupt
+            assertThrows(IllegalArgumentException::class.java) { runBlocking { f.approve(23, 575.0) } }
+            assertEquals(before, f.state)
+            assertEquals(events, f.events)
+            assertTrue(f.segments.isEmpty())
+        }
+    }
+
+    @Test
+    fun `duplicate gap and continuity loss skip obsolete forward lookup`() = runBlocking {
+        val inputs = listOf(
+            GhostInput.Location(location(575.0, 32_000), 0.0),
+            GhostInput.Location(location(575.0, 23_000), 0.0, true),
+            GhostInput.ContinuityLost,
+            GhostInput.TripEnded,
+        )
+        inputs.forEach { input ->
+            val f = Fixture()
+            f.begin()
+            (0..21).forEach { f.move(it.toLong(), it * 25.0) }
+            f.move(22, 550.0, bearing = null)
+            f.failForward = true
+            val before = f.state
+            f.useCase.process("current", "session", 22, input)
+            assertEquals(before, f.state)
+            f.useCase.process("current", "session", 23, input)
+            assertEquals(0, f.forwardQueryCount)
+            assertNull(f.state?.active)
+            assertEquals(1, f.segments.size)
+        }
     }
 }
