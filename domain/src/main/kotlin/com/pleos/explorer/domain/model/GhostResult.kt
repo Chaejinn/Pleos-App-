@@ -19,6 +19,38 @@ data class GhostPassage(
     val currentPassedAtMs: Long,
     val firstPassedAtMs: Long,
     val previousLastPassedAtMs: Long,
+    val visits: List<GhostPassageVisit> = emptyList(),
+) {
+    fun revisitedDistanceM(minAgeMs: Long): Double {
+        require(minAgeMs >= 0 && distanceM.isFinite() && distanceM >= 0)
+        if (visits.isEmpty()) return 0.0
+        visits.forEach { visit ->
+            require(visit.currentFromAtMs >= 0 && visit.currentToAtMs >= 0 &&
+                visit.pastFromAtMs >= 0 && visit.pastToAtMs >= 0)
+            require(visit.currentFromAtMs == visits.first().currentFromAtMs &&
+                visit.currentToAtMs == visits.first().currentToAtMs)
+        }
+        var lower = 0.0
+        var upper = 1.0
+        visits.forEach { visit ->
+            val fromAge = (visit.currentFromAtMs - visit.pastFromAtMs).toDouble()
+            val toAge = (visit.currentToAtMs - visit.pastToAtMs).toDouble()
+            val limit = minAgeMs.toDouble()
+            if (fromAge < limit && toAge < limit) return 0.0
+            if (fromAge < limit) lower = maxOf(lower, (limit - fromAge) / (toAge - fromAge))
+            if (toAge < limit) upper = minOf(upper, (limit - fromAge) / (toAge - fromAge))
+        }
+        return distanceM * (upper - lower).coerceIn(0.0, 1.0)
+    }
+}
+
+data class GhostPassageVisit(
+    val pastTripId: String?,
+    val pathSegmentId: String,
+    val currentFromAtMs: Long,
+    val currentToAtMs: Long,
+    val pastFromAtMs: Long,
+    val pastToAtMs: Long,
 )
 
 data class GhostResult(

@@ -1,7 +1,6 @@
 package com.pleos.explorer.domain.geo
 
 import com.pleos.explorer.domain.model.GeoPoint
-import kotlin.math.cos
 import kotlin.math.sqrt
 
 internal object GhostCorridor {
@@ -19,15 +18,13 @@ internal object GhostCorridor {
     }
 
     fun intervals(from: GeoPoint, to: GeoPoint, edges: List<Pair<GeoPoint, GeoPoint>>, radiusM: Double): List<Interval> {
-        val scale = GeoDistance.EARTH_RADIUS_M * cos(Math.toRadians((from.latitudeDeg + to.latitudeDeg) / 2))
-        fun project(point: GeoPoint) = PlanePoint(scale * Math.toRadians(point.longitudeDeg - from.longitudeDeg),
-            GeoDistance.EARTH_RADIUS_M * Math.toRadians(point.latitudeDeg - from.latitudeDeg))
-        val end = project(to)
+        val plane = GhostPlane(from, to)
+        val end = plane.project(to)
         val lengthSquared = end.x * end.x + end.y * end.y
         if (lengthSquared == 0.0) return listOf(Interval(0.0, 1.0))
         return edges.flatMap { (first, second) ->
-            val a = project(first)
-            val b = project(second)
+            val a = plane.project(first)
+            val b = plane.project(second)
             val result = mutableListOf<Interval>()
             listOf(a, b).forEach { center ->
                 val linear = -2 * (end.x * center.x + end.y * center.y)

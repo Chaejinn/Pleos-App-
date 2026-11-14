@@ -1,29 +1,32 @@
 package com.pleos.explorer.domain.engine
 
 import com.pleos.explorer.domain.geo.GeoDistance
-import com.pleos.explorer.domain.geo.GhostCorridor
-import com.pleos.explorer.domain.geo.GhostMatch
 import com.pleos.explorer.domain.geo.GhostMatcher
+import com.pleos.explorer.domain.geo.GhostVisitMatcher
+import com.pleos.explorer.domain.geo.GhostVisitRange
 import com.pleos.explorer.domain.geo.GridProjector
 import com.pleos.explorer.domain.geo.PathSimplifier
 import com.pleos.explorer.domain.model.DetectionPolicy
 import com.pleos.explorer.domain.model.GeoPoint
 import com.pleos.explorer.domain.model.GhostCursor
 import com.pleos.explorer.domain.model.GhostPassage
+import com.pleos.explorer.domain.model.GhostPassageVisit
 import com.pleos.explorer.domain.model.GhostResult
 import com.pleos.explorer.domain.model.GhostSection
 import com.pleos.explorer.domain.model.GhostSegment
 import com.pleos.explorer.domain.model.HistoricalTrack
 import com.pleos.explorer.domain.model.PathSegment
 import com.pleos.explorer.domain.model.TrackPoint
-import com.pleos.explorer.domain.model.ValidatedLocation
 import kotlin.math.abs
+import kotlin.math.roundToLong
 
 class GhostResultBuilder(
     private val matcher: GhostMatcher = GhostMatcher(),
     private val grid: GridProjector = GridProjector(),
     private val simplifier: PathSimplifier = PathSimplifier(),
 ) {
+    private val visitMatcher = GhostVisitMatcher()
+
     fun requiredGridKeys(segments: List<GhostSegment>): Set<String> = segments.flatMap { segment ->
         segment.sections.flatMap { section ->
             grid.split(section.currentFrom.point, section.currentTo.point).flatMap { grid.neighbors(it.gridKey) }
@@ -85,51 +88,49 @@ class GhostResultBuilder(
 
     private fun passages(index: Int, section: GhostSection, path: List<TrackPoint>,
         tracks: List<HistoricalTrack>): List<GhostPassage> {
-        val a = grid.project(section.currentFrom.point)
-        val b = grid.project(section.currentTo.point)
-        val dx = b.x - a.x
-        val dy = b.y - a.y
-        val squared = dx * dx + dy * dy
-        val edges = tracks.flatMap { track -> track.points.zipWithNext().filter { (from, to) ->
-            from.pathSegmentId == to.pathSegmentId && to.sequence - from.sequence == 1L &&
-                abs(from.point.longitudeDeg - to.point.longitudeDeg) <= 180
-        }.map { it.first.point to it.second.point } }
-        val boundaries = GhostCorridor.intervals(section.currentFrom.point, section.currentTo.point, edges,
-            DetectionPolicy.GHOST_DISTANCE_M).flatMap { listOf(it.start, it.end) }
-        val fractions = (listOf(0.0, 1.0) + boundaries + tracks.flatMap { it.points }.mapNotNull { point ->
-            val p = grid.project(point.point)
-            val fraction = ((p.x - a.x) * dx + (p.y - a.y) * dy) / squared
-            fraction.takeIf { it > 1e-8 && it < 1 - 1e-8 &&
-                GeoDistance.distanceToSegment(point.point, section.currentFrom.point, section.currentTo.point) <=
-                DetectionPolicy.GHOST_DISTANCE_M }
-        }).sorted().fold(mutableListOf<Double>()) { cuts, value ->
-            if (cuts.isEmpty() || value - cuts.last() > 1e-8) cuts.add(value)
+        val ranges = baseline(section, path) + visitMatcher.ranges(section, tracks)
+        val boundaries = ranges.flatMap { listOf(it.fromFraction, it.toFraction) }
+            .filter { it > 1e-10 && it < 1 - 1e-10 }
+        val fractions = (listOf(0.0, 1.0) + boundaries).sorted().fold(mutableListOf<Double>()) { cuts, value ->
+            if (cuts.isEmpty() || value - cuts.last() > 1e-10) cuts.add(value)
             cuts
         }
-        val matches = mutableMapOf<Double, List<List<GhostMatch>>>()
-        fun atFraction(fraction: Double): List<List<GhostMatch>> = matches.getOrPut(fraction) {
-            runs(matcher.matchesValidated(at(section, fraction), tracks))
-        }
         return fractions.zipWithNext().map { (start, end) ->
-            val currentFrom = at(section, start)
-            val currentTo = at(section, end)
-            val length = GeoDistance.meters(currentFrom.point, currentTo.point)
-            val times = mutableListOf(at(path, section.pastFrom, section.pastTo, start).timeMs,
-                at(path, section.pastFrom, section.pastTo, end).timeMs)
-            val from = atFraction(start)
-            val to = atFraction(end)
-            from.forEach { starts -> to.filter { it.first().cursor.key == starts.first().cursor.key }.forEach { ends ->
-                val pair = starts.flatMap { a -> ends.mapNotNull { b ->
-                    val advance = matcher.advance(a.cursor, b.cursor, tracks) ?: return@mapNotNull null
-                    if (advance <= 0 || advance > length + 2 * DetectionPolicy.GHOST_DISTANCE_M ||
-                        !matcher.covers(currentFrom, currentTo, a.cursor, b.cursor, tracks)) null
-                    else Triple(a, b, abs(advance - length))
-                } }.minWithOrNull(compareBy<Triple<GhostMatch, GhostMatch, Double>> { it.first.distanceM + it.second.distanceM }
-                    .thenBy { it.third }.thenBy { it.first.cursor.from.sequence })
-                pair?.let { times.add(it.first.cursor.timeMs); times.add(it.second.cursor.timeMs) }
-            } }
-            GhostPassage(index, start, end, section.distanceM * (end - start), minOf(currentFrom.timeMs, currentTo.timeMs),
-                times.min(), times.max())
+            val currentFromAtMs = timeAt(section, start)
+            val currentToAtMs = timeAt(section, end)
+            val middle = (start + end) / 2
+            val visits = ranges.filter { middle >= it.fromFraction && middle <= it.toFraction }.map { range ->
+                GhostPassageVisit(range.tripId, range.segmentId, currentFromAtMs, currentToAtMs,
+                    range.timeAt(start), range.timeAt(end))
+            }.distinct()
+            check(visits.isNotEmpty())
+            GhostPassage(index, start, end, section.distanceM * (end - start), minOf(currentFromAtMs, currentToAtMs),
+                visits.minOf { minOf(it.pastFromAtMs, it.pastToAtMs) },
+                visits.maxOf { maxOf(it.pastFromAtMs, it.pastToAtMs) }, visits)
+        }
+    }
+
+    private fun baseline(section: GhostSection, path: List<TrackPoint>): List<GhostVisitRange> {
+        val edges = path.zipWithNext()
+        val bounds = edges.indices.map { index ->
+            (if (index == 0) section.pastFrom.fraction else 0.0) to
+                (if (index == edges.lastIndex) section.pastTo.fraction else 1.0)
+        }
+        val lengths = edges.mapIndexed { index, (a, b) ->
+            GeoDistance.meters(a.point, b.point) * (bounds[index].second - bounds[index].first)
+        }
+        val total = lengths.sum()
+        require(total > 0)
+        var distance = 0.0
+        return edges.mapIndexedNotNull { index, (a, b) ->
+            val start = distance / total
+            distance += lengths[index]
+            val end = distance / total
+            if (end <= start) null else {
+                fun timeAt(fraction: Double) = a.timeMs + ((b.timeMs - a.timeMs) * fraction).roundToLong()
+                GhostVisitRange(start, end, a.tripId, a.pathSegmentId,
+                    timeAt(bounds[index].first), timeAt(bounds[index].second))
+            }
         }
     }
 
@@ -147,54 +148,8 @@ class GhostResultBuilder(
         return cells
     }
 
-    private fun at(section: GhostSection, fraction: Double): ValidatedLocation {
-        val from = section.currentFrom
-        val to = section.currentTo
-        val bearing = from.bearingDeg?.let { a -> to.bearingDeg?.let { b ->
-            val delta = (b - a + 540) % 360 - 180
-            (a + delta * fraction + 360) % 360
-        } }
-        return ValidatedLocation(from.timeMs + ((to.timeMs - from.timeMs) * fraction).toLong(),
-            from.elapsedMs + ((to.elapsedMs - from.elapsedMs) * fraction).toLong(),
-            GeoPoint(from.point.latitudeDeg + (to.point.latitudeDeg - from.point.latitudeDeg) * fraction,
-                from.point.longitudeDeg + (to.point.longitudeDeg - from.point.longitudeDeg) * fraction),
-            null, bearing, maxOf(from.accuracyM, to.accuracyM))
-    }
-
-    private fun at(path: List<TrackPoint>, from: GhostCursor, to: GhostCursor, fraction: Double): GhostCursor {
-        if (fraction == 0.0) return from
-        if (fraction == 1.0) return to
-        val edges = path.zipWithNext()
-        val lengths = edges.mapIndexed { index, (a, b) ->
-            GeoDistance.meters(a.point, b.point) *
-                ((if (index == edges.lastIndex) to.fraction else 1.0) - (if (index == 0) from.fraction else 0.0))
-        }
-        var remaining = lengths.sum() * fraction
-        edges.forEachIndexed { index, (a, b) ->
-            if (lengths[index] > 0 && remaining <= lengths[index]) {
-                val edgeLength = GeoDistance.meters(a.point, b.point)
-                val position = (if (index == 0) from.fraction else 0.0) + remaining / edgeLength
-                return GhostCursor(a, b, position.coerceIn(0.0, 1.0))
-            }
-            remaining -= lengths[index]
-        }
-        return to
-    }
-
-    private fun runs(matches: List<GhostMatch>): List<List<GhostMatch>> {
-        val result = mutableListOf<MutableList<GhostMatch>>()
-        matches.groupBy { it.cursor.key }.values.forEach { options ->
-            var run: MutableList<GhostMatch>? = null
-            options.sortedBy { it.cursor.from.sequence }.forEach { match ->
-                if (run?.lastOrNull()?.cursor?.to?.sequence != match.cursor.from.sequence) {
-                    run = mutableListOf()
-                    result.add(requireNotNull(run))
-                }
-                requireNotNull(run).add(match)
-            }
-        }
-        return result
-    }
+    private fun timeAt(section: GhostSection, fraction: Double): Long = section.currentFrom.timeMs +
+        ((section.currentTo.timeMs - section.currentFrom.timeMs) * fraction).roundToLong()
 
     private fun at(cursor: GhostCursor) = GeoPoint(
         cursor.from.point.latitudeDeg + (cursor.to.point.latitudeDeg - cursor.from.point.latitudeDeg) * cursor.fraction,
