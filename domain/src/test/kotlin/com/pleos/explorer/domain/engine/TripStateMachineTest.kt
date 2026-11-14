@@ -322,5 +322,96 @@ class TripStateMachineTest {
             f.engine.process(f.state.copy(tripId = "broken"), TripInput.Tick(0, epoch), 0)
         }
         assertThrows(IllegalArgumentException::class.java) { f.engine.resume(f.state, " ") }
+        val active = Fixture()
+        active.vehicle(0, Gear.D, speed = 0.0)
+        val invalid = listOf(active.state.copy(vehicleSpeed = com.pleos.explorer.domain.model.Observation(Double.NaN, 0)),
+            active.state.copy(gear = com.pleos.explorer.domain.model.Observation(Gear.P, 1)),
+            active.state.copy(capabilities = unsupported))
+        invalid.forEach { snapshot -> assertThrows(IllegalArgumentException::class.java) {
+            active.engine.process(snapshot, TripInput.Tick(1, epoch + 1), 1)
+        } }
+    }
+
+    @Test
+    fun `late accepted SDK positions and vehicle fields retain their own observation clocks`() {
+        val f = Fixture()
+        f.noGear()
+        f.location(0, 2.0)
+        f.tick(1_000)
+        f.location(900, 2.0)
+        assertEquals(1_000L, f.state.lastElapsedMs)
+        assertEquals(900L, f.state.locationSpeed?.observedAtElapsedMs)
+        assertEquals(listOf(0L, 900L), f.state.startCandidate?.locations?.map { it.elapsedMs })
+        f.location(800, 0.0)
+        assertEquals(900L, f.state.locationSpeed?.observedAtElapsedMs)
+        f.tick(10_000)
+        f.location(2_000, 2.0)
+        assertNull(f.state.startCandidate)
+        val vehicle = Fixture()
+        vehicle.tick(1_000)
+        assertTrue(vehicle.vehicle(900, Gear.D).transitions.single() is TripTransition.Started)
+        vehicle.vehicle(800, Gear.P)
+        assertEquals(Gear.D, vehicle.state.gear?.value)
+    }
+
+    @Test
+    fun `stale supported signals never authorize parked UI and preconsent samples stay discarded`() {
+        val f = Fixture()
+        f.vehicle(0, Gear.D, speed = 10.0)
+        f.vehicle(6_000, Gear.P, true)
+        assertEquals(UiAccess.UNKNOWN, f.state.uiAccess)
+        f.vehicle(7_000, Gear.P, true, 0.0)
+        assertEquals(UiAccess.PARKED, f.state.uiAccess)
+        val denied = Fixture()
+        denied.state = TripLifecycleSnapshot("session")
+        denied.access(1_000, true, true)
+        assertTrue(denied.vehicle(900, Gear.D).transitions.isEmpty())
+        assertNull(denied.state.gear)
+    }
+
+    @Test
+    fun `late pre-pause locations do not become resumed route points`() {
+        val f = Fixture()
+        f.vehicle(0, Gear.D, false, 2.0)
+        assertTrue(f.location(500, 2.0).recordCurrentLocation)
+        f.vehicle(1_000, brake = true, speed = 0.0)
+        assertFalse(f.location(1_500, 0.0).recordCurrentLocation)
+        f.vehicle(2_000, Gear.D, false, 2.0)
+        assertFalse(f.location(1_900, 2.0).recordCurrentLocation)
+        assertTrue(f.location(2_100, 2.0).recordCurrentLocation)
+        assertFalse(f.location(2_100, 2.0).recordCurrentLocation)
+    }
+
+    @Test
+    fun `parking time before a new trip never completes its five minute stop timer`() {
+        val f = Fixture()
+        (0..310).forEach { f.vehicle(it * 1_000L, Gear.P, speed = 0.0) }
+        assertTrue(f.vehicle(311_000, Gear.D, speed = 0.0).transitions.single() is TripTransition.Started)
+        assertEquals(311_000L, f.state.stoppedSinceElapsedMs)
+        assertTrue(f.tick(311_001).transitions.isEmpty())
+    }
+
+    @Test
+    fun `late support metadata cannot erase a newer moving speed or bypass restart blocking`() {
+        val f = Fixture()
+        f.vehicle(1_000, speed = 10.0)
+        f.vehicle(2_000, Gear.P)
+        f.vehicle(500, capabilities = VehicleCapabilities(gear = SignalSupport.SUPPORTED,
+            speed = SignalSupport.UNSUPPORTED))
+        assertEquals(10.0, f.state.vehicleSpeed?.value)
+        assertEquals(UiAccess.RESTRICTED, f.state.uiAccess)
+        f.tick(10_000)
+        f.vehicle(3_000, capabilities = unsupported)
+        assertEquals(SignalSupport.SUPPORTED, f.state.capabilities.speed)
+        val stopped = Fixture()
+        (0..300).forEach { stopped.vehicle(it * 1_000L, Gear.D, speed = 0.0) }
+        assertTrue(stopped.state.startBlocked)
+        assertTrue(stopped.vehicle(299_500, Gear.N).transitions.isEmpty())
+        assertTrue(stopped.state.startBlocked)
+        val recovered = Fixture()
+        recovered.noGear()
+        assertTrue(recovered.vehicle(1_000, Gear.D, false, 3.0).transitions.single() is TripTransition.Started)
+        assertEquals(SignalSupport.SUPPORTED, recovered.state.capabilities.speed)
+        assertEquals(UiAccess.RESTRICTED, recovered.state.uiAccess)
     }
 }
