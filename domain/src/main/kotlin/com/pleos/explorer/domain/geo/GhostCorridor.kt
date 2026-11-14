@@ -1,22 +1,30 @@
 package com.pleos.explorer.domain.geo
 
 import com.pleos.explorer.domain.model.GeoPoint
-import kotlin.math.cos
 import kotlin.math.sqrt
 
 internal object GhostCorridor {
-    private data class Interval(val start: Double, val end: Double)
+    internal data class Interval(val start: Double, val end: Double)
 
     fun covers(from: GeoPoint, to: GeoPoint, edges: List<Pair<GeoPoint, GeoPoint>>, radiusM: Double): Boolean {
-        val scale = GeoDistance.EARTH_RADIUS_M * cos(Math.toRadians((from.latitudeDeg + to.latitudeDeg) / 2))
-        fun project(point: GeoPoint) = PlanePoint(scale * Math.toRadians(point.longitudeDeg - from.longitudeDeg),
-            GeoDistance.EARTH_RADIUS_M * Math.toRadians(point.latitudeDeg - from.latitudeDeg))
-        val end = project(to)
+        if (from == to) return true
+        var covered = 0.0
+        intervals(from, to, edges, radiusM).forEach { range ->
+            if (range.start > covered + 1e-10) return false
+            covered = maxOf(covered, range.end)
+            if (covered >= 1.0 - 1e-10) return true
+        }
+        return false
+    }
+
+    fun intervals(from: GeoPoint, to: GeoPoint, edges: List<Pair<GeoPoint, GeoPoint>>, radiusM: Double): List<Interval> {
+        val plane = GhostPlane(from, to)
+        val end = plane.project(to)
         val lengthSquared = end.x * end.x + end.y * end.y
-        if (lengthSquared == 0.0) return true
-        val intervals = edges.flatMap { (first, second) ->
-            val a = project(first)
-            val b = project(second)
+        if (lengthSquared == 0.0) return listOf(Interval(0.0, 1.0))
+        return edges.flatMap { (first, second) ->
+            val a = plane.project(first)
+            val b = plane.project(second)
             val result = mutableListOf<Interval>()
             listOf(a, b).forEach { center ->
                 val linear = -2 * (end.x * center.x + end.y * center.y)
@@ -40,13 +48,6 @@ internal object GhostCorridor {
             }
             result
         }.sortedBy { it.start }
-        var covered = 0.0
-        intervals.forEach { range ->
-            if (range.start > covered + 1e-10) return false
-            covered = maxOf(covered, range.end)
-            if (covered >= 1.0 - 1e-10) return true
-        }
-        return false
     }
 
     private fun interval(start: Double, end: Double): Interval? {

@@ -14,8 +14,16 @@ class GhostMatcher {
     private val grid = GridProjector()
 
     fun matches(location: ValidatedLocation, history: List<HistoricalTrack>): List<GhostMatch> {
+        validateHistory(history)
+        return matchesValidated(location, history)
+    }
+
+    internal fun validateHistory(history: List<HistoricalTrack>) {
         require(history.map { it.tripId }.distinct().size == history.size) { "Duplicate historical trip" }
         history.forEach(::validate)
+    }
+
+    internal fun matchesValidated(location: ValidatedLocation, history: List<HistoricalTrack>): List<GhostMatch> {
         val bearing = location.bearingDeg ?: return emptyList()
         return history.flatMap { track -> track.points.zipWithNext().mapNotNull { (a, b) ->
             if (!connected(a, b) ||
@@ -62,7 +70,7 @@ class GhostMatcher {
         return GhostCorridor.covers(currentFrom.point, currentTo.point, edges, DetectionPolicy.GHOST_DISTANCE_M)
     }
 
-    private fun path(from: GhostCursor, to: GhostCursor, history: List<HistoricalTrack>): List<TrackPoint>? {
+    internal fun path(from: GhostCursor, to: GhostCursor, history: List<HistoricalTrack>): List<TrackPoint>? {
         require(from.fraction.isFinite() && from.fraction in 0.0..1.0 &&
             to.fraction.isFinite() && to.fraction in 0.0..1.0)
         if (from.key != to.key || to.from.sequence < from.from.sequence ||
