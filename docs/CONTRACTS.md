@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 5 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 6 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -9,7 +9,8 @@
 F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #7에서 F-05 지역 경계·방문·뱃지 제안과 저장 포트를 구현했다. F-05의 실제 API는 8절을 따르며,
 이슈 #9에서 F-12 고스트 구간 판정·이력 조회·저장 포트를 구현했다. 실제 API는 9절을 따른다.
-차량 상태기계·칭호·F-13 비교 결과·범용 통합 저장은 후속 구현 규격이다.
+이슈 #11에서 F-13 위치 기반 비교 결과·신규 거리 집계·보상 제안 포트를 구현했다. 실제 API는 10절을 따른다.
+차량 상태기계·칭호·차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
 ## 1. 공통 표현
@@ -69,7 +70,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `AchievementTitle` | `titleId: String`, `conditionText: String`, `acquiredAtMs: Long`, `tripId: String?` |
 | `DrivingMetrics` | `id: String`, `tripId: String`, `segmentIndex: Int`, `startPointId: String?`, `pathSegmentId: String`, `startDistanceM: Double`, `endDistanceM: Double`, `harshBrakes: Int?`, `harshSteers: Int?`, `turnSignalRate: Double?`, `avgEfficiency: Efficiency?`, `turnCount: Int?`, `signaledTurnCount: Int?` |
 | `Efficiency` | `value: Double`, `unit: EfficiencyUnit` |
-| `GhostResult` | `id: String`, `tripId: String`, `pastTripId: String?`, `matchedDistanceM: Double`, `firstPassedAtMs: Long`, `previousLastPassedAtMs: Long`, `newRoadM: Double`, `metricsDiff: MetricsDiff?`, `currentPath: List<PathSegment>`, `pastPath: List<PathSegment>` |
+| `GhostResult` | `id: String`, `tripId: String`, `pastTripId: String?`, `matchedDistanceM: Double`, `firstPassedAtMs: Long`, `previousLastPassedAtMs: Long`, `newRoadM: Double`, `metricsDiff: MetricsDiff?`, `currentPath: List<PathSegment>`, `pastPath: List<PathSegment>`, `passages: List<GhostPassage>`, `finalized: Boolean = false`; 10절 참조 |
 | `MetricsDiff` | `harshBrakesDelta: Int?`, `harshSteersDelta: Int?`, `turnSignalRateDelta: Double?`, `efficiencyDelta: Efficiency?` |
 | `TripRegionVisit` | `id: String`, `tripId: String`, `regionCode: String`, `entrySequence: Long`, `qualifiedAtMs: Long` |
 | `PendingReward` | `id: String`, `deduplicationKey: String`, `tripId: String?`, `kind: RewardKind`, `subjectId: String`, `occurredAtMs: Long`, `acknowledgedAtMs: Long?` |
@@ -100,6 +101,9 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `ProcessRegionVisitUseCase` | `suspend start/process/resume` | 구현됨. F-05 저장 포트와 방문·뱃지·보상 제안 조합 |
 | `GhostDetector` | `process(state, input, sequence, history): GhostUpdate` | 구현됨. snapshot·시작/진행/종료 제안. 9절 참조 |
 | `ProcessGhostInputUseCase` | `suspend start/process/resume` | 구현됨. 이력 조회와 F-12 저장 경계 조합 |
+| `GhostResultBuilder` | `build(segment, history): GhostResult` | 구현됨. F-12 대응 구간의 날짜·표시 경로 계산 |
+| `GhostResultAssembler` | `process(state, input, history): GhostComparisonUpdate` | 구현됨. F-03 누적 신규 거리와 F-12 실제 경계 조합 |
+| `ProcessGhostComparisonUseCase` | `suspend start/process/resume` | 구현됨. F-13 이력 조회·결과·보상 저장 제안 조합. 10절 참조 |
 | `TitleEvaluator` | `evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified>` | 방문·종료·고스트 완료·지정 지점 진입 사실을 판정 |
 | `MetricsCollector` | `process(sample: VehicleSample, position: TrackPosition?): List<DrivingMetrics>` | 위치 연결 가능한 구간 지표 반환. 종료 때 미완료 구간 flush |
 | `ProcessDriveInputUseCase` | `suspend process(input: DriveInput): ProcessingOutcome` | 순서 조정, 포트 조회, 변경 묶음 저장, 상태 확정 |
@@ -470,3 +474,88 @@ Trip 삭제는 해당 snapshot·종료 구간을 제거하고, 보존 결과의 
 트랜잭션으로 묶는다. 여러 전용 UseCase를 순서대로 호출하는 것만으로 원자성을 보장하지 않는다.
 GhostSegment는 F-13용 원본 대응 구간이며 GhostResult·보상 큐가 아니다. F-13은 이 대응 범위에 대해
 최초 통과·현재 이전 최종 통과·종료 뒤 신규 도로를 집계해야 하며 과거 Trip 전체 시각으로 대체하지 않는다.
+
+## 10. F-13 비교 결과 API와 앱 연결 계약
+
+이슈 #11의 구현은 위치 기반 비교 결과와 저장 제안이다. F-15 원본 지표가 준비되지 않았으므로
+metricsDiff는 null이다. Efficiency·EfficiencyUnit·MetricsDiff 모델 추가가 차량 지표 계산 완료를 뜻하지 않는다.
+기존 앱·SDK·Room·지도·F-03·05·12 임계값은 보존한다. 실제 보상 큐 표시·TTS·칭호 지급·리플레이는 후속 통합이다.
+
+### 입력과 호출 순서
+
+```kotlin
+val comparisons = ProcessGhostComparisonUseCase(ghostComparisonStore, historyRepository, idGenerator)
+comparisons.start(tripId, sessionId)
+comparisons.process(tripId, sessionId, sequence, GhostComparisonInput(trackUpdate, ghostUpdate))
+comparisons.resume(tripId, newSessionId, GhostComparisonInput(trackResumeUpdate, ghostResumeUpdate))
+```
+
+- GhostComparisonInput은 같은 Trip·session의 F-03 TrackUpdate와 F-12 GhostUpdate다. F-03 승인·거절·종료와
+  F-12 처리를 동일 순서로 수행하고 **모든 revision**을 전달한다. 두 엔진을 revision 0에서 시작한 뒤 F-13도 시작한다.
+- 위치 입력은 같은 sequence다. TrackRecorder.finish는 마지막 위치 sequence를 유지하므로 종료 입력은
+  GhostUpdate.lastInputSequence를 사용한다. 종료는 F-03 FINISHED/DISCARDED와 F-12 finished=true를 함께 전달한다.
+- resume는 F-03·F-12 resume 제안과 함께 호출한다. 새 세션의 sequence는 -1로 초기화하고 다음 입력부터 0 이상이다.
+  이미 저장된 동일 세션 resume·동일/이전 입력 sequence는 재처리하지 않는다.
+- 누락 revision·서로 다른 Trip/session·불일치 승인 위치는 commit 전에 거절한다. 중간부터 연결해 빠진 경계를 추측하지 않는다.
+- 세 전용 UseCase를 차례로 commit하는 방식은 통합 트랜잭션이 아니다. 실제 앱은 TrackRecorder·GhostDetector·
+  GhostResultAssembler의 제안을 같은 DriveChangeSet에 조합하고 snapshot·포인트·결과·보상을 한 번에 저장한다.
+  GhostResultAssembler.process 자체도 입력 일관성을 검증한다. UseCase는 조회 전에 validate를 먼저 호출한다.
+
+### 날짜 근거와 표시 경로
+
+GhostResultBuilder는 Finished의 GhostSegment를 받는다. 현재 Trip을 제외한 완료·보존 이력을
+HistoryRepository.findNearby로 대응 현재 선분 전체와 인접 격자에 대해 한 번 묶어 조회한다.
+조회 어댑터는 9절처럼 앞뒤 원본·sequence·segment를 보존한다. 후보별 DB 조회를 하지 않는다.
+
+- 선택한 과거 Trip은 F-12가 고정한 pastTripId다. 표시용 과거 경로를 더 오래된 Trip으로 교체하지 않는다.
+- 최초·이전 최종 시각은 보존 이력 중 해당 공간·방향에 대응하는 원본 cursor의 epoch 시각이다.
+  Trip 시작·종료 시각이나 격자의 lastVisitedAt으로 대체하지 않는다. 서로 다른 Trip의 날짜 근거는 각 공간 범위에만 적용한다.
+- GhostPassage는 `sectionIndex`, `fromFraction`, `toFraction`, `distanceM`, `currentPassedAtMs`,
+  `firstPassedAtMs`, `previousLastPassedAtMs`다. fraction은 대응 GhostSection 현재 선분의 0..1 위치다.
+  각 section의 passage 거리 합은 해당 section의 인정 거리다.
+- 긴 승인 선분은 과거 원본점 투영과 연속 과거 edge의 30m 범위 진입·이탈 위치에서 나눈다.
+  양 끝 원본점이 멀어도 중간 edge가 겹치는 경우를 포함한다. 나눈 구간에 같은 Trip·segment·연속 sequence,
+  방향·전진·30m 전체 경로 검사를 적용한다. 중간 위치·방향·시각 보간은 날짜 근거 계산용이며 새 승인 입력으로 저장하지 않는다.
+- 선택한 대응 과거 경로의 구간 내 시각은 경로 거리 비율로 보간한다. 시각 역전을 공백으로 오인하지 않는다.
+  currentPassedAtMs는 해당 현재 부분의 양끝 epoch 중 작은 값, previousLastPassedAtMs는 대응 과거 시각 중 큰 값이다.
+- 결과 요약의 firstPassedAtMs는 passage의 최소값, previousLastPassedAtMs는 최대값이다.
+  F-07의 30일·5km 조건은 전체 요약 날짜로 모든 거리를 인정하지 않고 passage별 근거로 계산해야 한다.
+- 현재·과거 표시 경로는 인정된 sections만 구성하고 미일치 연결 구간은 별도 PathSegment로 끊는다.
+  과거 중간 원본을 포함한 뒤 허용 오차 5m로 단순화하여 결과에 복사한다. 원본 삭제 후에도 복사한 경로는 남는다.
+- F-12 cursor에 보존한 원본도 이력과 병합하되 동일 sequence 상충은 실패다. 필요한 중간 원본이 없으면
+  결과를 추측하거나 직선으로 잇지 않고 오류를 전달한다. 삭제된 시기의 원본 없는 정밀 매칭은 복원하지 못한다.
+- 이력은 한 번 검증하고 edge가 통과하는 격자로 메모리 인덱싱한다. 부분 경계의 매칭 결과를 재사용한다.
+  구면 거리·좌표/방향 보간·로컬 평면 근사이며 입체 교차·가까운 평행 도로 구별 한계는 F-12와 같다.
+
+### 신규 거리 경계와 최종 확정
+
+newRoadM의 범위는 **고스트의 마지막 일치 위치 뒤부터 다음 고스트의 첫 일치 위치 또는 Trip 종료까지**다.
+500m 활성 감지 위치와 200m 이탈 감지 위치로 범위를 자르지 않는다.
+
+- F-03 ACTIVE snapshot에서 newGridKeys에 속한 pendingRoads.firstExploredDistanceM 합만 현재 Trip 누적으로 읽는다.
+  과거에 탐험한 격자의 영구 누적값은 제외한다. F-03 finish는 pendingRoads를 비우므로 종료 때 직전 누적을 유지한다.
+- GhostComparisonSnapshot은 후보 firstLocation.elapsedMs별 누적, 활성 구간의 최초·마지막 일치 누적을 보존한다.
+  모든 F-03·F-12 입력을 전달해야 실제 경계의 누적을 확보할 수 있다. 임의 거리·격자 수 × 100m로 대신하지 않는다.
+- Finished에서 F-12 구간 id를 그대로 결과 id로 사용하고, 마지막 일치 누적을 기준으로 감지 지연 중 신규 거리도 포함한다.
+- 다음 Started가 오면 첫 일치 체크포인트에서 이전 결과를 finalized=true로 확정한다.
+  그 전 provisional newRoadM은 다음 후보의 500m 확인을 기다리는 값이므로 최종 절단 때 감소할 수 있다.
+- Trip 종료는 마지막 pending 결과를 확정한다. resume는 활성 고스트를 닫고 같은 Trip의 신규 거리 기준을 보존하되,
+  이전 세션 elapsedMs 후보를 비운다. 같은 결과를 새 ID로 만들지 않는다.
+
+### 저장·보상·실패 처리
+
+GhostComparisonSnapshot은 tripId·sessionId·revision·lastInputSequence·F03/F12 revision·newRoadM·후보 체크포인트·
+active·pending·finished를 가진다. GhostComparisonUpdate는 다음 snapshot·결과 ID별 변경·신규 PendingReward 제안이다.
+
+GhostComparisonStore는 `suspend load(tripId): GhostComparisonSnapshot?`,
+`suspend commit(expectedRevision: Long?, update: GhostComparisonUpdate)`를 구현한다.
+revision 비교와 snapshot·결과 upsert·신규 보상을 같은 트랜잭션으로 저장한다. null revision은 최초 생성 전용이다.
+결과 id와 보상 deduplicationKey에 유니크 제약을 둔다. 실제 Room 구현체는 아직 없다.
+
+결과 최초 생성 때 `GHOST_RESULT:{resultId}` 보상을 한 번 제안한다. subjectId는 resultId,
+occurredAtMs는 F-12 endedAtMs다. 거리 갱신·최종 확정에는 보상을 다시 만들지 않으며 확인 상태를 초기화하지 않는다.
+F-10 UI는 subjectId로 최신 결과를 조회한다. 큐의 소비·표시·acknowledge는 앱의 후속 구현이다.
+
+조회 실패·상충 원본·저장 실패·취소는 상위로 전달한다. 같은 sessionId·sequence로 재시도하며 다음 입력을 먼저 처리하지 않는다.
+commit 뒤 응답이 유실되어도 저장된 cursor로 결과·보상 중복을 막는다. Trip 삭제·전체 삭제는 비교 snapshot과 해당 결과도 제거하고,
+다른 Trip의 결과가 삭제한 과거 Trip을 참조하면 pastTripId만 null로 해제한다. 표시 경로·날짜 근거는 보존한다.
