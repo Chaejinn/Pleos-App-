@@ -2,7 +2,10 @@ package com.pleos.explorer.domain.usecase
 
 import com.pleos.explorer.domain.GhostTestFixtures.NOW_MS
 import com.pleos.explorer.domain.GhostTestFixtures.history
+import com.pleos.explorer.domain.GhostTestFixtures.koreanHistory
 import com.pleos.explorer.domain.GhostTestFixtures.location
+import com.pleos.explorer.domain.GhostTestFixtures.revisitedHistory
+import com.pleos.explorer.domain.RegionTestFixtures
 import com.pleos.explorer.domain.engine.GhostDetector
 import com.pleos.explorer.domain.engine.LocationValidator
 import com.pleos.explorer.domain.engine.TrackRecorder
@@ -40,12 +43,25 @@ class ProcessGhostInputUseCaseTest {
         var cancelCommit = false
         var failHistory = false
         var failLoad = false
+        var boundedHistory = false
         var queriedKeys = emptySet<String>()
         var excludedTrip = ""
         private var id = 0
+        private val recorder = TrackRecorder(IdGenerator { "point-${++id}" })
+        private var recording = recorder.start("current", NOW_MS, "session").snapshot
         val useCase = ProcessGhostInputUseCase(this, this, GhostDetector(IdGenerator { "ghost-${++id}" }))
 
         suspend fun begin() = useCase.start("current", "session")
+        suspend fun approve(sequence: Long, northM: Double, bearing: Double? = 0.0): GhostUpdate {
+            val validation = LocationValidator().validate(LocationSample(NOW_MS + sequence * 1_000,
+                sequence * 1_000, RegionTestFixtures.point(0.0, northM), null, bearing, 5.0), recording.previous)
+            check(validation is LocationValidation.Accepted)
+            val update = recorder.process(recording, validation, sequence, emptyMap())
+            val result = useCase.process("current", "session", sequence, GhostInput.Location(validation.location,
+                update.connectedDistanceM, update.newSegment))
+            recording = update.snapshot
+            return result
+        }
         suspend fun move(sequence: Long, northM: Double, elapsedMs: Long = sequence * 1_000,
             eastM: Double = 0.0, bearing: Double? = 0.0): GhostUpdate {
             val input = location(northM, elapsedMs, eastM, bearing)
@@ -63,7 +79,18 @@ class ProcessGhostInputUseCaseTest {
             if (failHistory) throw IOException("history read failed")
             queriedKeys = gridKeys
             excludedTrip = excludedTripId
-            return history
+            if (!boundedHistory) return history
+            return history.filter { it.tripId != excludedTripId }.map { track ->
+                val selected = mutableSetOf<Int>()
+                track.points.forEachIndexed { index, point ->
+                    if (point.gridKey in gridKeys) {
+                        selected.add(index)
+                        if (index > 0) selected.add(index - 1)
+                        if (index < track.points.lastIndex) selected.add(index + 1)
+                    }
+                }
+                track.copy(points = selected.sorted().map { track.points[it] })
+            }
         }
         override suspend fun commit(expectedRevision: Long?, update: GhostUpdate) {
             if (failCommit) { failCommit = false; throw IOException("commit failed") }
@@ -415,5 +442,38 @@ class ProcessGhostInputUseCaseTest {
         assertEquals(NOW_MS, segment.startedAtMs)
         assertEquals(NOW_MS, segment.endedAtMs)
         assertEquals(NOW_MS + 22_000 - 60_000, segment.sections.last().currentTo.timeMs)
+    }
+
+    @Test
+    fun `later pass in one past segment qualifies without pooling separate passes`() = runBlocking {
+        val past = revisitedHistory()
+        assertEquals(1, past.points.map { it.pathSegmentId }.distinct().size)
+        val f = Fixture(listOf(past))
+        f.begin()
+        f.approve(0, 0.0)
+        assertTrue(requireNotNull(f.state).candidates.any { it.cursor.from.sequence >= 32 })
+        (1..19).forEach { f.approve(it.toLong(), it * 25.0) }
+        assertTrue(f.events.filterIsInstance<GhostEvent.Started>().isEmpty())
+        (20..24).forEach { f.approve(it.toLong(), it * 25.0) }
+        assertEquals(1, f.events.filterIsInstance<GhostEvent.Started>().size)
+        assertTrue(requireNotNull(f.state?.active).sections.all { it.pastFrom.from.sequence >= 32 })
+    }
+
+    @Test
+    fun `bounded history retains active ghost after 175 meter direction outage and stationary recovery`() = runBlocking {
+        val f = Fixture(listOf(koreanHistory()))
+        f.boundedHistory = true
+        f.begin()
+        (0..21).forEach { f.approve(it.toLong(), it * 25.0) }
+        val active = requireNotNull(f.state?.active)
+        (22..28).forEach { f.approve(it.toLong(), it * 25.0, null) }
+        assertEquals(175.0, requireNotNull(f.state?.active).mismatchedDistanceM, 0.001)
+        f.approve(29, 700.0)
+        assertEquals(active.id, f.state?.active?.id)
+        assertEquals(0.0, requireNotNull(f.state?.active).mismatchedDistanceM, 0.0)
+        assertEquals(active.matchedDistanceM, requireNotNull(f.state?.active).matchedDistanceM, 0.0)
+        f.approve(30, 725.0)
+        assertTrue(f.segments.isEmpty())
+        assertEquals(active.matchedDistanceM + 25, requireNotNull(f.state?.active).matchedDistanceM, 0.001)
     }
 }
