@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 6 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 7 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -82,7 +82,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 - 시간 없는 `GeoPoint`는 표시용이다. 고스트 알고리즘은 시각·방향·순서가 있는 TrackPoint를 사용한다.
 - `TripRegionVisit`는 기존 뱃지 재방문도 주행 상세에 표시하기 위한 보조 모델이다. 뱃지만 조회해 해당 Trip의 모든 방문 지역을 추측하지 않는다.
 - `PendingReward`는 F-10의 재시작 가능한 큐다. `deduplicationKey`는 BADGE의 badgeId, TITLE의 titleId, GHOST_RESULT의 결과 id에 kind를 붙인 값이다.
-- `previousLastPassedAtMs`는 현재 주행을 반영하기 전의 마지막 통과 시각이다. F-07의 30일 조건은 최초 통과일로 판정하지 않는다.
+- `previousLastPassedAtMs`는 현재 주행을 반영하기 전 마지막 통과의 표시용 요약이다. F-07의 30일 조건은 10절의 동일 위치 시각 쌍으로 판정한다.
 - `firstExploredDistanceM`는 F-07의 영구 누적 신규 격자 거리 집계다. 격자 수 × 100m로 대체하지 않는다. 도로 단위 정밀 탐험률을 의미하지 않는다.
 - 단순화 경로와 고스트 결과의 표시용 경로는 원본 삭제 후에도 남는다. 원본 TrackPoint가 없으면 해당 시기 고스트 정밀 매칭은 제공할 수 없다.
 - `MetricsDiff`는 현재−과거다. 서로 다른 단위·미지원·불충분한 관측 지표는 null이다. 비율은 횟수를 합친 뒤 재계산한다.
@@ -511,20 +511,33 @@ HistoryRepository.findNearby로 대응 현재 선분 전체와 인접 격자에 
 - 최초·이전 최종 시각은 보존 이력 중 해당 공간·방향에 대응하는 원본 cursor의 epoch 시각이다.
   Trip 시작·종료 시각이나 격자의 lastVisitedAt으로 대체하지 않는다. 서로 다른 Trip의 날짜 근거는 각 공간 범위에만 적용한다.
 - GhostPassage는 `sectionIndex`, `fromFraction`, `toFraction`, `distanceM`, `currentPassedAtMs`,
-  `firstPassedAtMs`, `previousLastPassedAtMs`다. fraction은 대응 GhostSection 현재 선분의 0..1 위치다.
+  `firstPassedAtMs`, `previousLastPassedAtMs`, `visits: List<GhostPassageVisit> = emptyList()`다.
+  fraction은 대응 GhostSection 현재 선분의 0..1 위치다.
   각 section의 passage 거리 합은 해당 section의 인정 거리다.
-- 긴 승인 선분은 과거 원본점 투영과 연속 과거 edge의 30m 범위 진입·이탈 위치에서 나눈다.
-  양 끝 원본점이 멀어도 중간 edge가 겹치는 경우를 포함한다. 나눈 구간에 같은 Trip·segment·연속 sequence,
-  방향·전진·30m 전체 경로 검사를 적용한다. 중간 위치·방향·시각 보간은 날짜 근거 계산용이며 새 승인 입력으로 저장하지 않는다.
-- 선택한 대응 과거 경로의 구간 내 시각은 경로 거리 비율로 보간한다. 시각 역전을 공백으로 오인하지 않는다.
+- GhostPassageVisit는 `pastTripId: String?`, `pathSegmentId: String`, `currentFromAtMs: Long`,
+  `currentToAtMs: Long`, `pastFromAtMs: Long`, `pastToAtMs: Long`이다. 현재·과거의 from과 to는 각각 같은
+  대응 위치의 시각 쌍이다. 같은 passage의 모든 visit는 같은 현재 양끝 시각을 사용한다.
+- 긴 승인 선분은 과거 원본점 투영과 연속 과거 edge의 30m 범위·방향 허용 범위의 진입/이탈 위치에서 나눈다.
+  과거 edge 양끝 밖의 투영 구간은 제외하고, 같은 Trip·segment·연속 sequence·전진·양끝 과거 방향과 45도 이하를 요구한다.
+  30m 범위와 원본 투영은 GhostCorridor와 동일한 GhostPlane으로 계산한다. 경계를 다른 구면 거리로 재검사하여
+  양의 길이인 부분 전체를 제거하지 않는다. F-12 공개 매칭과 30m·45도·500m·200m 임계값은 변경하지 않는다.
+- 선택한 대응 과거 경로는 원본 꼭짓점에서도 나누고 경로 거리 비율로 시각을 보간한다. 추가 방문은 원본 edge의
+  투영 비율로 보간한다. epoch ms는 가장 가까운 밀리초로 반올림하며 시각 역전을 공백으로 오인하지 않는다.
+  보간은 날짜 근거 계산용이며 새 승인 입력으로 저장하지 않는다.
   currentPassedAtMs는 해당 현재 부분의 양끝 epoch 중 작은 값, previousLastPassedAtMs는 대응 과거 시각 중 큰 값이다.
 - 결과 요약의 firstPassedAtMs는 passage의 최소값, previousLastPassedAtMs는 최대값이다.
-  F-07의 30일·5km 조건은 전체 요약 날짜로 모든 거리를 인정하지 않고 passage별 근거로 계산해야 한다.
+  이 요약이나 `currentPassedAtMs - previousLastPassedAtMs`로 경과 시간을 계산하지 않는다. 서로 다른 위치의 시각이기 때문이다.
+- F-07에 전달할 30일 경과 거리는 `result.passages.sumOf { it.revisitedDistanceM(30L * 24 * 60 * 60 * 1000) }`으로 계산한다.
+  이 메서드는 같은 위치의 현재−과거 시각을 선형 보간하고, 모든 방문에 대해 조건을 만족하는 부분 거리만 반환한다.
+  따라서 각 위치의 가장 최근 방문을 기준으로 판정하며, 정확히 30일은 포함하고 일부만 만족하면 그 길이만 인정한다.
+  음수 기준·유효하지 않은 거리/시각·불일치 현재 시각 쌍은 거절한다. 이 메서드가 칭호를 지급하지는 않는다.
+- 버전 7 이전처럼 visits가 비어 있으면 경과 거리 근거가 없어 0m를 반환한다. 표시용 요약으로 복원하지 않는다.
+  Room 연결 시 visits 전체를 저장·복구한다. 현재 실제 Room 구현체가 없어 이번 변경에 DB migration은 없다.
 - 현재·과거 표시 경로는 인정된 sections만 구성하고 미일치 연결 구간은 별도 PathSegment로 끊는다.
   과거 중간 원본을 포함한 뒤 허용 오차 5m로 단순화하여 결과에 복사한다. 원본 삭제 후에도 복사한 경로는 남는다.
 - F-12 cursor에 보존한 원본도 이력과 병합하되 동일 sequence 상충은 실패다. 필요한 중간 원본이 없으면
   결과를 추측하거나 직선으로 잇지 않고 오류를 전달한다. 삭제된 시기의 원본 없는 정밀 매칭은 복원하지 못한다.
-- 이력은 한 번 검증하고 edge가 통과하는 격자로 메모리 인덱싱한다. 부분 경계의 매칭 결과를 재사용한다.
+- 이력은 한 번 검증하고 edge가 통과하는 격자로 메모리 인덱싱한다. 계산한 부분 범위와 시각 쌍을 재사용한다.
   구면 거리·좌표/방향 보간·로컬 평면 근사이며 입체 교차·가까운 평행 도로 구별 한계는 F-12와 같다.
 
 ### 신규 거리 경계와 최종 확정
@@ -558,4 +571,5 @@ F-10 UI는 subjectId로 최신 결과를 조회한다. 큐의 소비·표시·ac
 
 조회 실패·상충 원본·저장 실패·취소는 상위로 전달한다. 같은 sessionId·sequence로 재시도하며 다음 입력을 먼저 처리하지 않는다.
 commit 뒤 응답이 유실되어도 저장된 cursor로 결과·보상 중복을 막는다. Trip 삭제·전체 삭제는 비교 snapshot과 해당 결과도 제거하고,
-다른 Trip의 결과가 삭제한 과거 Trip을 참조하면 pastTripId만 null로 해제한다. 표시 경로·날짜 근거는 보존한다.
+다른 Trip의 결과가 삭제한 과거 Trip을 참조하면 결과와 각 GhostPassageVisit의 pastTripId를 null로 해제한다.
+표시 경로·pathSegmentId·동일 위치 시각 쌍·날짜 요약은 보존한다.
