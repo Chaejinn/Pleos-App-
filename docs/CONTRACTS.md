@@ -1,12 +1,14 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 2 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 3 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
 2026-11-13 구현 범위: F-03 위치·경로 모델, `LocationValidator`, `TrackRecorder`,
 `RecordTrackUseCase`, `IdGenerator`, `TrackRecordingStore`가 신규 `domain` 패키지에 구현되어 있다.
-F-03의 실제 호출·복구·저장 계약은 7절을 따른다. 나머지 차량·방문·칭호·고스트·통합 저장 API는 후속 구현 규격이다.
+F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
+이슈 #7에서 F-05 지역 경계·방문·뱃지 제안과 저장 포트를 구현했다. F-05의 실제 API는 8절을 따르며,
+차량 상태기계·칭호·고스트·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
 ## 1. 공통 표현
@@ -93,7 +95,8 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `TripStateMachine` | `process(input: TripInput): TripTransition` | 차량·위치·타이머 입력으로 시작·일시중지·재개·종료·변화 없음 |
 | `TrackRecorder` | `process(state, validation, inputSequence, knownRoads): TrackUpdate` | 구현됨. 변경 제안만 반환하며 실제 타입·시작·종료·복구는 7절 참조 |
 | `RecordTrackUseCase` | `suspend start/process/resume/finish` | 구현됨. F-03 전용 입출력 조합, 저장 성공 후 반환 |
-| `RegionVisitDetector` | `process(input: RegionInput): List<VisitQualified>` | 진입·지역 내 거리·체류·이탈을 처리해 방문 확정만 반환 |
+| `RegionVisitDetector` | `process(state, input, inputSequence): RegionVisitUpdate` | 구현됨. 상태 변경·방문 제안만 계산하며 저장은 하지 않음. 8절 참조 |
+| `ProcessRegionVisitUseCase` | `suspend start/process/resume` | 구현됨. F-05 저장 포트와 방문·뱃지·보상 제안 조합 |
 | `GhostDetector` | `process(location: ValidatedLocation, candidates: List<HistoricalTrack>): List<GhostEvent>` | 시작·진행·종료. 한 입력에서 종료와 시작이 함께 가능해 목록 반환 |
 | `TitleEvaluator` | `evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified>` | 방문·종료·고스트 완료·지정 지점 진입 사실을 판정 |
 | `MetricsCollector` | `process(sample: VehicleSample, position: TrackPosition?): List<DrivingMetrics>` | 위치 연결 가능한 구간 지표 반환. 종료 때 미완료 구간 flush |
@@ -107,8 +110,8 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `TripInput` | DriveInput 중 검증된 위치·차량·타이머. 동의는 UseCase 진입에서 차단 |
 | `TripTransition` | `Started(trip)`, `Paused(atMs)`, `Resumed(atMs)`, `Ended(atMs)`, `Unchanged` |
 | `TrackUpdate` | `snapshot: RecordingSnapshot`, `points: List<TrackPoint>`, `roads: Map<String, ExploredRoad>`, `connectedDistanceM: Double`, `newSegment: Boolean`, `validation: LocationValidation?`; 7절 참조 |
-| `RegionInput` | `Location(location, connectedDistanceM)`, `Tick(elapsedMs, timeMs)`, `ContinuityLost`, `TripEnded` |
-| `VisitQualified` | `regionCode`, `tripId`, `entrySequence`, `qualifiedAtMs` |
+| `RegionInput` | `Location(location, connectedDistanceM, newSegment)`, `Tick(elapsedMs, timeMs)`, `ContinuityLost`, `TripStarted(tripId)`, `TripEnded`, `TripDetached(tripId)`; 8절 참조 |
+| `VisitQualified` | `regionCode: String`, `tripId: String?`, `entrySequence: Long`, `qualifiedAtMs: Long`; Trip 없는 정차 방문도 표현 |
 | `HistoricalTrack` | `tripId`, `points: List<TrackPoint>`; 순서와 segment 경계를 유지한 과거 후보 |
 | `GhostEvent` | `Started(pastTripId, atMs)`, `Updated(matchedDistanceM)`, `Finished(result: GhostResult)` |
 | `AchievementFact` | `BadgeGranted(badgeId, tripId, atMs)`, `TripFinished(tripId, atMs, newRoadM)`, `GhostFinished(result)`, `CoastEntered(coastId, tripId, atMs)` |
@@ -129,7 +132,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `IdGenerator` | `newId(): String`; 실제 UUID, 테스트 고정 순서 ID | 계약 동현, 플랫폼 구현 채진 |
 | `LocationSource` | `samples(): Flow<LocationSample>`; 실제·재생 구현 모두 같은 형식 | 채진 |
 | `VehicleSource` | `samples(): Flow<VehicleSample>`; 미지원 신호는 null | 채진 |
-| `RegionCatalog` | `findCandidates(point): List<RegionDefinition>`; 경계 상자 인덱스로 후보 반환 | 계약 동현, 로더 채진, 데이터 현민 |
+| `RegionCatalog` | `findCandidates(point: GeoPoint)` 및 `findCandidates(bounds: GeoBounds)`: `List<RegionDefinition>`; 점·선분 경계 상자 후보 | 구현 계약 동현, 파일 로더 채진, 데이터 현민 |
 | `HistoryRepository` | `suspend findNearby(gridKeys: Set<String>, excludedTripId: String): List<HistoricalTrack>` | 채진 |
 | `DriveStore` | `suspend loadSnapshot(): DriveSnapshot`, `suspend commit(changeSet: DriveChangeSet): CommitOutcome` | 채진 |
 | `ArchiveRepository` | `observeTrips(): Flow<List<Trip>>`, `suspend getTripDetail(tripId): TripDetail?`, `suspend deleteTrip(tripId)`, `suspend deleteAll()` | 채진 |
@@ -261,3 +264,95 @@ interface TrackRecordingStore {
 고정 투영 평면의 공선 겹침 구간을 합쳐 신규 길이를 중복 누적하지 않는다. 공선 오차 허용은 부동소수점 계산용 0.000001m다.
 다른 선분이나 GPS 잡음으로 달라진 선을 정밀 도로 수준으로 합치지는 않는다. 원본 1초 위치의 직선 근사와 약 100m 격자라는 한계가 있다.
 날짜변경선 통과는 경도 ±180°에서 분리해 전 지구를 가로지르는 격자를 만들지 않는다.
+
+## 8. F-05 지역 방문 API와 앱 연결 계약
+
+이슈 #7의 범위는 순수 Kotlin 경계 판정·방문 엔진, 뱃지·방문·보상 저장 제안과 테스트 저장 포트다.
+실제 행정구역 파일·TourAPI·지도·Room·서비스·보상 UI 연결은 포함하지 않는다. 기존 F-03·legacy·설정 API는 유지한다.
+
+### 지역 데이터와 후보 조회
+
+| 타입 | 필드·의미 |
+| --- | --- |
+| `GeoBounds` | `westDeg`, `southDeg`, `eastDeg`, `northDeg`: Double. WGS84 축 정렬 경계 상자 |
+| `RegionPolygon` | `outer: List<GeoPoint>`, `holes: List<List<GeoPoint>>`. 각 ring은 최소 4점이며 첫 점과 끝 점이 같음 |
+| `RegionGeometry` | `polygons: List<RegionPolygon>`. 단일 Polygon과 MultiPolygon을 같은 타입으로 표현 |
+| `RegionDefinition` | `code`, `name`, `provinceCode`: String, `representativePoint: GeoPoint`, `geometry`, 계산된 `bbox` |
+| `RegionSection` | `regionCode: String?`, `startFraction`, `endFraction`: Double. 승인 선분 안의 순서 있는 구간, null은 지역 밖 |
+
+GeoJSON의 `[경도, 위도]`는 파일 로더에서 `GeoPoint(위도, 경도)`로 변환한다. 코드 문자열과 앞자리 0을 보존한다.
+provinceName·뱃지 에셋 등 표시 메타데이터는 기존 데이터 규격을 따르며, 판정 모델의 필드로 중복 계산하지 않는다.
+`IndexedRegionCatalog`는 입력 geometry를 복사하고 경계 상자 트리를 한 번 생성한다. 입력마다 전국 파일을 읽거나 파싱하지 않는다.
+`findCandidates(point)`는 점의 경계 상자, `findCandidates(bounds)`는 선분 전체의 경계 상자와 겹치는 지역을 반환한다.
+양 끝점이 지역 밖이어도 중간에 통과하는 지역을 빠뜨리면 안 된다. 미존재는 빈 목록, 조회·데이터 오류는 예외다.
+
+`RegionGeometryResolver.locate`는 hole 내부를 제외한다. 외곽·hole 경계선은 경계로 취급한다.
+경계 후보에 직전 지역이 있으면 유지하고, 없으면 code 사전순으로 선택한다. 겹친 내부 후보도 code 순으로 하나를 선택한다.
+`split`은 외곽·hole 교점에서 선분을 나눠 같은 지역의 연속 구간을 합친다. 분할 비율의 합은 1이며 지역 밖도 보존한다.
+거리에는 F-03의 승인 연결 거리를 해당 비율로 배분한다. 좌표 선형 근사와 한국 기준 고정 투영을 사용하며,
+날짜변경선을 가로지르는 지역 ring·승인 선분은 지원하지 않고 거절한다. 세계 전역 경계 엔진으로 간주하지 않는다.
+
+유한 좌표·닫힌 ring·3개 이상 서로 다른 점·비영 면적을 검사한다. 연속 중복점은 허용하고,
+자기 교차·외곽 밖 hole·외곽과 접촉/교차하는 hole·겹치거나 중첩된 hole은 카탈로그 생성에서 거절한다.
+실제 파일 가공 시 이 지원 범위를 검증해야 하며 불량 자료를 조용히 빈 지역으로 대체하지 않는다.
+
+### 상태·입력·방문 제안
+
+`RegionVisitSnapshot`은 sessionId·tripId?·revision·lastInputSequence·nextEntrySequence·candidate·previous·lastLocationElapsedMs를 가진다.
+`RegionVisitCandidate`는 regionCode·entrySequence·distanceM·dwellMs·qualified를 보존한다.
+entrySequence는 지역 진입마다 증가하며 Trip 변경·프로세스 복구에서 초기화하지 않는다. 전체 삭제 때 관련 기록과 함께 초기화한다.
+
+| 입력 | 처리 |
+| --- | --- |
+| `Location` | F-03과 동일한 승인 위치, connectedDistanceM, newSegment를 전달. 위치를 별도로 재검증하거나 가짜 정확도로 채우지 않음 |
+| `Tick` | 음수 시각 검사·입력 cursor 저장만 수행. 체류·공백·위치 기준점 변경 없음 |
+| `ContinuityLost` | 거절 위치·수집 중단 등 연결 단절. 미확정 후보의 거리·체류를 0으로 만들고 이전 위치를 비움 |
+| `TripStarted(tripId)` | 이후 방문의 Trip 연결 갱신. 같은 지역의 후보·확정 플래그는 보존 |
+| `TripEnded` | 정차 후 체류 판정을 위해 마지막 Trip 연결과 후보를 유지 |
+| `TripDetached(tripId)` | 폐기·삭제된 ID와 현재 연결이 일치할 때만 tripId를 null 처리. 후보·체류·확정 플래그 보존 |
+
+Tick은 늦게 도착한 SDK 관측보다 시각이 앞설 수 있다. 위치끼리의 순서만 lastLocationElapsedMs로 비교한다.
+F-03의 Rejected는 ContinuityLost로, Accepted는 `RegionInput.Location(location, connectedDistanceM, newSegment)`로 전달한다.
+중복 응답의 validation null은 새 승인 위치가 아니다. F-03의 마지막 저장점이 아닌 모든 승인 위치를 소비한다.
+연결 거리는 같은 승인 두 점의 거리와 일치해야 하며 1mm 또는 상대 오차 0.0001% 이내만 허용한다. 단절 입력 거리는 0이다.
+
+같은 진입에서 1000m 이상 이동하거나 유효 관측 사이의 체류 합이 180000ms 이상이면 `VisitQualified`를 한 번 제안한다.
+체류는 두 관측을 잇는 선분 전체가 같은 지역을 유지할 때만 누적한다. 지역 전환 시각을 추정해 체류 시간을 만들지 않는다.
+10초 이상 위치 공백·newSegment·ContinuityLost·새 세션 resume에서는 미확정 거리·체류를 초기화한다.
+TripStarted 자체는 후보를 보존하지만, 다음 Trip의 첫 F-03 승인 위치는 newSegment=true이므로 미확정 누적을 초기화한다.
+같은 지역이면 entrySequence는 유지하며 새 위치부터 다시 누적한다.
+이미 확정한 진입의 qualified는 유지하며, 유효 이탈 후 재진입이 확인되어야 다음 방문이다.
+동일/이전 위치 elapsedMs 입력은 진척을 더하지 않는다. qualifiedAtMs는 조건 충족을 확인한 승인 위치의 timeMs다.
+
+### 저장 조합과 복구
+
+```kotlin
+val detector = RegionVisitDetector(regionCatalog)
+val visits = ProcessRegionVisitUseCase(regionVisitStore, detector, idGenerator)
+visits.start(sessionId, tripId)
+visits.process(sessionId, sequence, regionInput)
+visits.resume(newSessionId)
+```
+
+이 API는 F-05 단독 저장 경계의 검증용 조합이다. 실제 F-03·05·보상 통합은 각 엔진의 제안을 같은 DriveChangeSet에 넣어
+하나의 트랜잭션으로 반영해야 한다. F-03 UseCase 저장 후 F-05 UseCase 저장을 순서대로 호출하는 것만으로 원자성이 생기지 않는다.
+Trip 폐기·삭제 시 기존 참조 해제와 TripDetached 입력도 같은 통합 변경에 포함한다.
+
+`RegionVisitStore`:
+
+- `load()`는 현재 사용자의 마지막 commit된 방문 snapshot을 반환한다. 한 입력 큐가 시작·처리·resume·삭제를 직렬 소유한다.
+- `findBadges(regionCodes)`는 요청한 **regionCode 집합**의 기존 뱃지를 읽되 반환 Map의 키는 **badgeId (`REGION:{code}`)**다.
+- `commit(expectedRevision, update)`는 현재 revision을 비교하고 snapshot·뱃지·Trip 방문·보상을 한 트랜잭션으로 저장한다.
+  expectedRevision null은 최초 생성에만 허용한다. 불일치·조회 실패·저장 실패·취소를 호출자에게 전달하며 일부만 저장하지 않는다.
+
+`RegionVisitUpdate`는 snapshot, qualifiedVisits, badges, visits, rewards를 가진다. badges는 badgeId별 변경 제안이다.
+최초 REGION 뱃지는 획득 시각·firstTripId·visitCount 1을 만들고 `BADGE:REGION:{code}` 보상 키를 한 번 제안한다.
+기존 뱃지는 최초 획득 정보를 보존하고 visitCount만 증가시키며 새 보상을 만들지 않는다.
+연결된 Trip이 있을 때만 TripRegionVisit를 만들고 `(tripId, regionCode, entrySequence)`로 중복을 차단한다.
+Trip이 없으면 firstTripId·보상 tripId는 null이며 dangling TripRegionVisit를 만들지 않는다.
+뱃지 badgeId와 보상 deduplicationKey는 각각 유니크다. UI는 반환된 제안이 아닌 commit된 보상 큐를 관측한다.
+
+시작·입력·resume 모두 sessionId와 입력 cursor로 재시도한다. 저장 실패 시 같은 입력부터 재시도하고 다음 입력을 진행하지 않는다.
+실제 commit 뒤 응답이 유실되어도 같은 sequence 재전송은 제안을 다시 만들지 않는다. 새 세션은 resume로 연결 정보를 비우고,
+미확정 후보의 누적을 초기화하되 entrySequence·확정 여부·마지막 Trip 연결은 보존한다. 원본 시계로 타이머를 이어 붙이지 않는다.
+전체 삭제에서는 방문 snapshot·진입 번호·방문·뱃지·보상을 함께 제거한다. F-10의 실제 큐 관측·표시·acknowledge는 후속 앱 구현이다.

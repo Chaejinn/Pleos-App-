@@ -9,4 +9,6 @@ object DetectionPolicy {
     const val PATH_TOLERANCE_M = 5.0
     const val GRID_SIZE_M = 100.0
     const val MIN_TRIP_DISTANCE_M = 200.0
+    const val REGION_VISIT_DISTANCE_M = 1_000.0
+    const val REGION_VISIT_DWELL_MS = 180_000L
 }
