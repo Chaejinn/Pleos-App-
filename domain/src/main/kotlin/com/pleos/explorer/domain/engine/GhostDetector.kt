@@ -7,6 +7,7 @@ import com.pleos.explorer.domain.geo.GridProjector
 import com.pleos.explorer.domain.model.DetectionPolicy
 import com.pleos.explorer.domain.model.GhostEvent
 import com.pleos.explorer.domain.model.GhostInput
+import com.pleos.explorer.domain.model.GhostKey
 import com.pleos.explorer.domain.model.GhostProgress
 import com.pleos.explorer.domain.model.GhostSection
 import com.pleos.explorer.domain.model.GhostSegment
@@ -22,6 +23,9 @@ class GhostDetector(
     private val matcher: GhostMatcher = GhostMatcher(),
     private val grid: GridProjector = GridProjector(),
 ) {
+    private data class CursorPosition(val key: GhostKey, val sequence: Long, val fraction: Double)
+    private data class ProgressMatch(val progress: GhostProgress, val distanceM: Double)
+
     fun requiredGridKeys(state: GhostSnapshot, input: GhostInput.Location): Set<String> {
         val location = input.location
         val previous = state.previous
@@ -71,16 +75,22 @@ class GhostDetector(
         val next = reset.snapshot
         val events = reset.events.toMutableList()
         val matches = matcher.matches(location, history.filter { it.tripId != state.tripId }).groupBy { it.cursor.key }
+        val matchRuns = matches.mapValues { (_, options) -> matchingRuns(options) }
         var active = next.active
-        var pending = next.candidates.mapNotNull { prior ->
-            advance(prior, matches[prior.cursor.key].orEmpty(), location, previous, input.connectedDistanceM, history)
-        }.associateBy { it.cursor.key }.toMutableMap()
-        matches.forEach { (key, options) ->
-            if (key !in pending && key != active?.cursor?.key) {
-                val match = options.minWith(compareBy<GhostMatch> { it.distanceM }.thenBy { it.cursor.from.sequence })
-                pending[key] = GhostProgress(match.cursor, location, location)
+        val advancedCandidates = next.candidates.flatMap { prior ->
+            matchRuns[prior.cursor.key].orEmpty().mapNotNull { options ->
+                advance(prior, options, location, previous, input.connectedDistanceM, history)
             }
         }
+        val seeds = matchRuns.filterKeys { it != active?.cursor?.key }.values.flatten().map { options ->
+            val match = options.minWith(compareBy<GhostMatch> { it.distanceM }.thenBy { it.cursor.from.sequence })
+            GhostProgress(match.cursor, location, location)
+        }
+        val pending = (advancedCandidates + seeds).groupBy { candidate ->
+            val cursor = candidate.cursor
+            if (cursor.fraction == 1.0) CursorPosition(cursor.key, cursor.to.sequence, 0.0)
+            else CursorPosition(cursor.key, cursor.from.sequence, cursor.fraction)
+        }.values.map { alternatives -> alternatives.maxBy { it.matchedDistanceM } }.toMutableList()
         if (active != null) {
             val advanced = advance(active, matches[active.cursor.key].orEmpty(), location, previous,
                 input.connectedDistanceM, history)
@@ -99,7 +109,7 @@ class GhostDetector(
             }
         }
         if (active == null) {
-            val eligible = pending.values.filter { it.matchedDistanceM >= DetectionPolicy.GHOST_START_DISTANCE_M }
+            val eligible = pending.filter { it.matchedDistanceM >= DetectionPolicy.GHOST_START_DISTANCE_M }
                 .sortedWith(compareByDescending<GhostProgress> { it.cursor.timeMs }
                     .thenBy { it.cursor.key.tripId }.thenBy { it.cursor.key.pathSegmentId })
             eligible.firstOrNull()?.let { chosen ->
@@ -110,28 +120,45 @@ class GhostDetector(
                 pending.clear()
             }
         }
-        return GhostUpdate(next.copy(previous = location, active = active, candidates = pending.values.toList()),
+        return GhostUpdate(next.copy(previous = location, active = active, candidates = pending.toList()),
             events.toList())
     }
 
-    private fun advance(prior: GhostProgress, options: List<GhostMatch>, location: ValidatedLocation,
-        previous: ValidatedLocation?, distanceM: Double, history: List<HistoricalTrack>): GhostProgress? {
-        val option = options.mapNotNull { match ->
-            val progress = matcher.advance(prior.cursor, match.cursor, history) ?: return@mapNotNull null
-            if (progress > prior.mismatchedDistanceM + distanceM + 2 * DetectionPolicy.GHOST_DISTANCE_M) null
-            else if (previous?.elapsedMs == prior.lastMatchedLocation.elapsedMs &&
-                !matcher.covers(prior.lastMatchedLocation, location, prior.cursor, match.cursor, history)) null
-            else match to progress
-        }.minWithOrNull(compareBy<Pair<GhostMatch, Double>> { it.first.distanceM }
-            .thenBy { it.first.cursor.from.sequence }) ?: return null
-        val credited = if (previous?.elapsedMs == prior.lastMatchedLocation.elapsedMs) {
-            minOf(distanceM, option.second)
-        } else 0.0
-        val sections = if (credited > 0) prior.sections + GhostSection(prior.lastMatchedLocation, location,
-            prior.cursor, option.first.cursor, credited) else prior.sections
-        return prior.copy(cursor = option.first.cursor, lastMatchedLocation = location,
-            matchedDistanceM = prior.matchedDistanceM + credited, mismatchedDistanceM = 0.0, sections = sections)
+    private fun matchingRuns(options: List<GhostMatch>): List<List<GhostMatch>> {
+        val runs = mutableListOf<MutableList<GhostMatch>>()
+        options.sortedBy { it.cursor.from.sequence }.forEach { match ->
+            val last = runs.lastOrNull()
+            if (last == null || last.last().cursor.to.sequence != match.cursor.from.sequence) {
+                runs.add(mutableListOf(match))
+            } else last.add(match)
+        }
+        return runs
     }
+
+    private fun advance(prior: GhostProgress, options: List<GhostMatch>, location: ValidatedLocation,
+        previous: ValidatedLocation?, distanceM: Double, history: List<HistoricalTrack>): GhostProgress? =
+        advances(prior, options, location, previous, distanceM, history)
+            .minWithOrNull(compareBy<ProgressMatch> { it.distanceM }
+                .thenBy { it.progress.cursor.from.sequence })?.progress
+
+    private fun advances(prior: GhostProgress, options: List<GhostMatch>, location: ValidatedLocation,
+        previous: ValidatedLocation?, distanceM: Double, history: List<HistoricalTrack>): List<ProgressMatch> =
+        options.mapNotNull { match ->
+            val progress = matcher.advance(prior.cursor, match.cursor, history) ?: return@mapNotNull null
+            if (progress > prior.mismatchedDistanceM + distanceM + 2 * DetectionPolicy.GHOST_DISTANCE_M) {
+                return@mapNotNull null
+            }
+            val consecutive = previous?.elapsedMs == prior.lastMatchedLocation.elapsedMs
+            if (consecutive && !matcher.covers(prior.lastMatchedLocation, location, prior.cursor, match.cursor, history)) {
+                return@mapNotNull null
+            }
+            val credited = if (consecutive) minOf(distanceM, progress) else 0.0
+            val sections = if (credited > 0) prior.sections + GhostSection(prior.lastMatchedLocation, location,
+                prior.cursor, match.cursor, credited) else prior.sections
+            ProgressMatch(prior.copy(cursor = match.cursor, lastMatchedLocation = location,
+                matchedDistanceM = prior.matchedDistanceM + credited, mismatchedDistanceM = 0.0, sections = sections),
+                match.distanceM)
+        }
 
     private fun disconnect(state: GhostSnapshot): GhostUpdate = GhostUpdate(
         state.copy(previous = null, active = null, candidates = emptyList()),
