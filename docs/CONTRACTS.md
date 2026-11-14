@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 3 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 4 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -8,7 +8,8 @@
 `RecordTrackUseCase`, `IdGenerator`, `TrackRecordingStore`가 신규 `domain` 패키지에 구현되어 있다.
 F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #7에서 F-05 지역 경계·방문·뱃지 제안과 저장 포트를 구현했다. F-05의 실제 API는 8절을 따르며,
-차량 상태기계·칭호·고스트·범용 통합 저장은 후속 구현 규격이다.
+이슈 #9에서 F-12 고스트 구간 판정·이력 조회·저장 포트를 구현했다. 실제 API는 9절을 따른다.
+차량 상태기계·칭호·F-13 비교 결과·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
 ## 1. 공통 표현
@@ -97,7 +98,8 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `RecordTrackUseCase` | `suspend start/process/resume/finish` | 구현됨. F-03 전용 입출력 조합, 저장 성공 후 반환 |
 | `RegionVisitDetector` | `process(state, input, inputSequence): RegionVisitUpdate` | 구현됨. 상태 변경·방문 제안만 계산하며 저장은 하지 않음. 8절 참조 |
 | `ProcessRegionVisitUseCase` | `suspend start/process/resume` | 구현됨. F-05 저장 포트와 방문·뱃지·보상 제안 조합 |
-| `GhostDetector` | `process(location: ValidatedLocation, candidates: List<HistoricalTrack>): List<GhostEvent>` | 시작·진행·종료. 한 입력에서 종료와 시작이 함께 가능해 목록 반환 |
+| `GhostDetector` | `process(state, input, sequence, history): GhostUpdate` | 구현됨. snapshot·시작/진행/종료 제안. 9절 참조 |
+| `ProcessGhostInputUseCase` | `suspend start/process/resume` | 구현됨. 이력 조회와 F-12 저장 경계 조합 |
 | `TitleEvaluator` | `evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified>` | 방문·종료·고스트 완료·지정 지점 진입 사실을 판정 |
 | `MetricsCollector` | `process(sample: VehicleSample, position: TrackPosition?): List<DrivingMetrics>` | 위치 연결 가능한 구간 지표 반환. 종료 때 미완료 구간 flush |
 | `ProcessDriveInputUseCase` | `suspend process(input: DriveInput): ProcessingOutcome` | 순서 조정, 포트 조회, 변경 묶음 저장, 상태 확정 |
@@ -112,8 +114,8 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `TrackUpdate` | `snapshot: RecordingSnapshot`, `points: List<TrackPoint>`, `roads: Map<String, ExploredRoad>`, `connectedDistanceM: Double`, `newSegment: Boolean`, `validation: LocationValidation?`; 7절 참조 |
 | `RegionInput` | `Location(location, connectedDistanceM, newSegment)`, `Tick(elapsedMs, timeMs)`, `ContinuityLost`, `TripStarted(tripId)`, `TripEnded`, `TripDetached(tripId)`; 8절 참조 |
 | `VisitQualified` | `regionCode: String`, `tripId: String?`, `entrySequence: Long`, `qualifiedAtMs: Long`; Trip 없는 정차 방문도 표현 |
-| `HistoricalTrack` | `tripId`, `points: List<TrackPoint>`; 순서와 segment 경계를 유지한 과거 후보 |
-| `GhostEvent` | `Started(pastTripId, atMs)`, `Updated(matchedDistanceM)`, `Finished(result: GhostResult)` |
+| `HistoricalTrack` | `tripId: String`, `points: List<TrackPoint>`; F-03이 확정한 sequence·segment 경계를 유지한 과거 후보 |
+| `GhostEvent` | `Started(id, pastTripId, atMs)`, `Updated(id, matchedDistanceM)`, `Finished(segment: GhostSegment)`; F-13 GhostResult는 후속 조합 |
 | `AchievementFact` | `BadgeGranted(badgeId, tripId, atMs)`, `TripFinished(tripId, atMs, newRoadM)`, `GhostFinished(result)`, `CoastEntered(coastId, tripId, atMs)` |
 | `AchievementProgress` | `regionBadgeCount: Int`, `newRoadDistanceM: Double`, `coastVisitsByDate`, `acquiredTitleIds: Set<String>` |
 | `TitleQualified` | `titleId`, `tripId`, `acquiredAtMs`, `conditionText` |
@@ -356,3 +358,90 @@ Trip이 없으면 firstTripId·보상 tripId는 null이며 dangling TripRegionVi
 실제 commit 뒤 응답이 유실되어도 같은 sequence 재전송은 제안을 다시 만들지 않는다. 새 세션은 resume로 연결 정보를 비우고,
 미확정 후보의 누적을 초기화하되 entrySequence·확정 여부·마지막 Trip 연결은 보존한다. 원본 시계로 타이머를 이어 붙이지 않는다.
 전체 삭제에서는 방문 snapshot·진입 번호·방문·뱃지·보상을 함께 제거한다. F-10의 실제 큐 관측·표시·acknowledge는 후속 앱 구현이다.
+
+## 9. F-12 고스트 API와 앱 연결 계약
+
+이슈 #9의 범위는 순수 Kotlin 고스트 판정·원본 이력 조회 계약·snapshot과 종료 구간 저장 제안이다.
+기존 F-03·F-05·legacy·설정 API와 app·Gradle·SDK·Room·팀원 데이터는 변경하지 않는다.
+지도 표시·리플레이·F-13 GhostResult 집계·F-07 칭호·F-10 보상 큐 생성은 후속 통합 범위다.
+
+### 이력 조회와 경로 연속성
+
+`HistoryRepository.findNearby(gridKeys: Set<String>, excludedTripId: String): List<HistoricalTrack>`는
+현재 Trip을 제외한 완료·보존 이력을 반환한다. `GhostDetector.requiredGridKeys`는 현재 승인 선분이 통과한 격자와
+각 격자의 인접 8개를 포함한다. 단절 첫 점은 현재 격자와 인접 8개만 조회한다.
+
+- 동일 tripId는 한 HistoricalTrack으로 묶고 TrackPoint.sequence 오름차순으로 반환한다.
+- gridKey만으로 일치를 확정하지 않는다. 조회 구간의 앞뒤 인접 원본도 포함해 보간할 선분을 구성한다.
+- 누락된 sequence를 다시 번호 매기거나, 다른 pathSegmentId·Trip의 점을 이어 붙이지 않는다.
+- cursor 사이의 중간 원본이 조회에서 누락되면 연속성을 증명하지 못하므로 거리를 인정하지 않는다.
+- 원본은 F-03이 승인·확정한 TrackPoint다. 과거 연결은 같은 Trip·segment와 연속 sequence로 확인한다.
+  timeMs는 벽시계이므로 그 차이로 수신 공백·속도·방향 순서를 다시 판정하지 않는다.
+- 데이터 오류·조회 실패는 예외다. 빈 이력은 정상적인 후보 없음이며 실패 대체값으로 사용하지 않는다.
+
+`GhostMatcher`는 인접 원본 사이를 선형 보간하고 현재점과의 구면 거리 30m 이하,
+현재 방향과 양 끝 과거 방향의 원형 차이 45도 이하를 검사한다. 방향 미확인은 후보에서 제외한다.
+`GhostCursor(from, to, fraction)`는 원본 두 점과 0..1 보간 비율을 보존한다. 현재 Trip은 판정에서도 재차 제외한다.
+과거 cursor가 뒤로 가거나 sequence·segment 연결이 끊기면 후보 누적을 합치지 않는다.
+
+거리 인정 전 현재 승인 선분 전체가 대응 과거 경로의 30m 범위에 있는지 확인한다.
+로컬 평면의 과거 각 선분 주변 캡슐 구간을 합쳐 현재 선분을 완전히 덮는지 검사하므로 양끝만 가까운 지름길을 제외한다.
+일치 거리는 현재 승인 거리와 과거 경로 전진 거리 중 작은 값이다. 한 과거점 주위의 반복 이동으로 거리를 만들지 않는다.
+구면 거리·좌표 보간·로컬 평면 근사이며 날짜변경선 과거 edge는 매칭하지 않는다.
+입체 교차·30m 이내 평행 도로를 정밀 도로 ID 없이 완전히 구분할 수 있다는 보장은 없다.
+
+### 상태와 이벤트
+
+| 타입 | 필드·역할 |
+| --- | --- |
+| `GhostSnapshot` | tripId·sessionId·revision·lastInputSequence·previous·candidates·active·finished |
+| `GhostProgress` | cursor·firstLocation·lastMatchedLocation·matchedDistanceM·mismatchedDistanceM·sections·id? |
+| `GhostKey` | 과거 tripId와 pathSegmentId. 서로 다른 후보의 거리를 합치지 않음 |
+| `GhostSection` | currentFrom/currentTo 승인 관측, pastFrom/pastTo cursor, 인정 distanceM |
+| `GhostSegment` | id·tripId·pastTripId·matchedDistanceM·startedAtMs·endedAtMs·sections |
+| `GhostInput` | Location(location, connectedDistanceM, newSegment), ContinuityLost, TripEnded |
+| `GhostUpdate` | 다음 snapshot과 이번 입력의 events. commit 전 확정 상태가 아님 |
+
+F-03과 같은 승인 위치·연결 거리·newSegment를 사용한다. F-03 Rejected는 ContinuityLost로 전달하고,
+중복 응답의 validation null은 새 입력으로 보내지 않는다. 별도로 가짜 정확도·방향·거리를 만들지 않는다.
+입력 연결 거리의 허용 오차는 F-05와 같은 1mm 또는 상대 오차 0.0001%다. 단절 입력 거리는 0이다.
+
+후보별 일치 거리가 500m 이상이면 Started를 한 번 제안하고 stable id를 발급한다.
+동시에 조건을 충족한 후보는 현재 대응 과거 시각이 최근인 순서, 동률이면 tripId·segment ID 사전순으로 선택한다.
+활성 대상은 구간 종료까지 고정하며 이후에는 Updated를 제안한다.
+
+활성 뒤 미일치 이동을 따로 누적해 200m 이상이면 마지막 일치 위치에서 Finished를 제안한다.
+200m 미만에서 복귀하면 누적 미일치 거리를 0으로 만들지만, 미관측 연결 거리를 matchedDistanceM에 넣지 않는다.
+복귀 가능 전진 범위는 마지막 일치 이후 미일치 누적을 포함한다. 미일치 기간 다른 후보가 새 조건을 충족하면
+한 입력에 이전 Finished와 다음 Started가 함께 있을 수 있어 events 목록을 반환한다.
+
+10초 이상 공백·newSegment·ContinuityLost·resume는 활성 구간을 닫고 이전 위치·후보를 비운다.
+TripEnded는 같은 정리를 수행하고 finished=true로 닫는다. 동일 세션 중복/이전 sequence는 재처리하지 않는다.
+동일/이전 위치 elapsedMs도 거리를 더하지 않는다. Tick으로 고스트 거리나 시각을 외삽하지 않는다.
+startedAtMs는 최초 일치 관측, endedAtMs는 시작 이상으로 보정한 마지막 일치 시각이다.
+벽시계가 역전되어도 sections의 원본 관측 시각은 보존하며, epoch 차이로 소요 시간 경쟁을 계산하지 않는다.
+
+### 저장과 복구
+
+```kotlin
+val detector = GhostDetector(idGenerator)
+val ghosts = ProcessGhostInputUseCase(ghostStore, historyRepository, detector)
+ghosts.start(tripId, sessionId)
+ghosts.process(tripId, sessionId, sequence, ghostInput)
+ghosts.resume(tripId, newSessionId)
+```
+
+`GhostStore.load(tripId)`는 마지막 commit된 GhostSnapshot을 반환한다.
+`commit(expectedRevision: Long?, update: GhostUpdate)`는 Trip별 revision을 비교하고 snapshot과
+Finished의 GhostSegment를 한 트랜잭션으로 저장한다. segment id는 유니크이며 null revision은 최초 생성에만 사용한다.
+동일 입력 재시도 키(sessionId·sequence)를 바꾸지 않는다. 실패·취소를 상위에 전달하고 다음 입력을 진행하지 않는다.
+실제 저장 후 응답만 유실되어도 같은 입력 재전송은 Started·Finished를 다시 만들지 않는다.
+
+resume는 새 세션의 단조 시계로 위치를 잇지 않고, 활성 구간을 마지막 일치점에서 닫은 뒤 새 관측부터 시작한다.
+Trip 삭제는 해당 snapshot·종료 구간을 제거하고, 보존 결과의 과거 Trip 참조 해제는 후속 통합 트랜잭션에서 수행한다.
+전체 삭제는 활성·대기 후보·snapshot·종료 구간도 함께 제거한다.
+
+위 UseCase는 F-12 단독 저장 경계다. 실제 F-03·05·12·보상 통합은 엔진 제안을 하나의 DriveChangeSet과
+트랜잭션으로 묶는다. 여러 전용 UseCase를 순서대로 호출하는 것만으로 원자성을 보장하지 않는다.
+GhostSegment는 F-13용 원본 대응 구간이며 GhostResult·보상 큐가 아니다. F-13은 이 대응 범위에 대해
+최초 통과·현재 이전 최종 통과·종료 뒤 신규 도로를 집계해야 하며 과거 Trip 전체 시각으로 대체하지 않는다.
