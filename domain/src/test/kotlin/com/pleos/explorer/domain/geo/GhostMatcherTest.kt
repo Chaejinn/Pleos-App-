@@ -41,13 +41,37 @@ class GhostMatcherTest {
         val separated = listOf(
             HistoricalTrack(base.tripId, base.points.filter { it.sequence != 2L }),
             base.copy(points = base.points.map { if (it.sequence >= 2) it.copy(pathSegmentId = "next") else it }),
-            base.copy(points = base.points.map { if (it.sequence >= 2) it.copy(timeMs = it.timeMs + 10_000) else it }),
         )
         separated.forEach { past ->
             val a = matcher.matches(location(12.5, 0), listOf(past)).minBy { it.distanceM }
             val b = matcher.matches(location(87.5, 1_000), listOf(past)).minBy { it.distanceM }
             assertNull(matcher.advance(a.cursor, b.cursor, listOf(past)))
         }
+    }
+
+    @Test
+    fun `wall clock correction does not break F03 sequence and segment continuity`() {
+        listOf(-60_000L, 60_000L).forEach { offset ->
+            val base = history()
+            val past = base.copy(points = base.points.map {
+                if (it.sequence >= 2) it.copy(timeMs = it.timeMs + offset) else it
+            })
+            val a = matcher.matches(location(12.5, 0), listOf(past)).minBy { it.distanceM }
+            val b = matcher.matches(location(87.5, 1_000), listOf(past)).minBy { it.distanceM }
+            assertEquals(75.0, requireNotNull(matcher.advance(a.cursor, b.cursor, listOf(past))), 0.001)
+        }
+    }
+
+    @Test
+    fun `whole straight segment stays covered inside the thirty meter corridor`() {
+        val past = history()
+        val a = location(12.5, 0, 29.99)
+        val b = location(112.5, 5_000, 29.99)
+        val from = matcher.matches(a, listOf(past)).minBy { it.distanceM }.cursor
+        val to = matcher.matches(b, listOf(past)).minBy { it.distanceM }.cursor
+        assertTrue(matcher.covers(a, b, from, to, listOf(past)))
+        assertFalse(matcher.covers(a, location(112.5, 5_000, 30.01), from, to, listOf(past)))
+        assertTrue(matcher.covers(a, a, from, from, listOf(past)))
     }
 
     @Test
