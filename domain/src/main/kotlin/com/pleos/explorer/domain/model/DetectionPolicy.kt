@@ -11,4 +11,8 @@ object DetectionPolicy {
     const val MIN_TRIP_DISTANCE_M = 200.0
     const val REGION_VISIT_DISTANCE_M = 1_000.0
     const val REGION_VISIT_DWELL_MS = 180_000L
+    const val GHOST_DISTANCE_M = 30.0
+    const val GHOST_BEARING_DEG = 45.0
+    const val GHOST_START_DISTANCE_M = 500.0
+    const val GHOST_EXIT_DISTANCE_M = 200.0
 }
