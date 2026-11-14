@@ -2,3 +2,5 @@
 *.bat text eol=crlf
 *.jar binary
 *.apk binary
+*.pdf binary
+*.json text eol=lf

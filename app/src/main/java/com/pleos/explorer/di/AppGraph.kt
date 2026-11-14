@@ -5,8 +5,20 @@ import com.pleos.explorer.data.repository.PreferenceSettingsRepository
 import com.pleos.explorer.domain.port.SettingsRepository
 import com.pleos.explorer.service.DriveStatus
 import com.pleos.explorer.platform.speech.SpeechGate
+import com.pleos.explorer.data.local.recording.RoomTrackRecordingStore
+import com.pleos.explorer.domain.engine.TrackRecorder
+import com.pleos.explorer.domain.port.IdGenerator
+import com.pleos.explorer.domain.usecase.RecordTrackUseCase
 
 class AppGraph(context: Context) {
+    val mapPreferences = com.pleos.explorer.data.repository.MapPreferences(context)
+    val uxAccessGate = com.pleos.explorer.platform.ux.UxAccessGate()
+    private val applicationContext = context.applicationContext
+    val trackRecordingStore by lazy { RoomTrackRecordingStore.create(applicationContext) }
+    fun newTrackRecordingUseCase(source: com.pleos.explorer.data.local.recording.RecordingInputSource =
+        com.pleos.explorer.data.local.recording.RecordingInputSource.UNKNOWN) = RecordTrackUseCase(
+        com.pleos.explorer.data.local.recording.SourcedTrackStore(trackRecordingStore, source),
+        TrackRecorder(IdGenerator { java.util.UUID.randomUUID().toString() }))
     val settingsRepository: SettingsRepository = PreferenceSettingsRepository(context)
     val driveStatus = DriveStatus()
     val speechGate = SpeechGate()

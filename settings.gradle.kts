@@ -12,6 +12,10 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven {
+            url = uri("https://devrepo.kakao.com/nexus/repository/kakaomap-releases/")
+            content { includeGroup("com.kakao.maps.open") }
+        }
+        maven {
             url = uri("https://nexus-playground.pleos.ai/repository/maven-releases/")
             content { includeGroupByRegex("ai\\.pleos\\..*") }
         }
