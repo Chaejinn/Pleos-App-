@@ -85,7 +85,7 @@ class ProcessTitleFactUseCaseTest {
         assertEquals(29, store.state.progress.regionBadgeCount)
         assertEquals(0, store.commits)
         store.state = store.state.copy(progress = AchievementProgress(30))
-        assertEquals(1, useCase.process(badge).titles.size)
+        assertEquals(1, useCase.process(badge.copy(badgeId = "REGION:B", atMs = NOW_MS + 1)).titles.size)
     }
 
     @Test
