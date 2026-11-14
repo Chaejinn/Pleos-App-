@@ -18,6 +18,7 @@ object DetectionPolicy {
     const val TITLE_REGION_COUNT = 30
     const val TITLE_REVISIT_DISTANCE_M = 5_000.0
     const val TITLE_REVISIT_AGE_MS = 30L * 24 * 60 * 60 * 1_000
+    const val TITLE_NEW_ROAD_DISTANCE_M = 100_000.0
     const val VEHICLE_OBSERVATION_MAX_AGE_MS = 5_000L
     const val TRIP_START_SPEED_MPS = 5.0 / 3.6
     const val TRIP_START_DURATION_MS = 30_000L
