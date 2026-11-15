@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 11 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 12 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -14,6 +14,7 @@ F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #15에서 F-02 주행 상태기계·신호 신선도·접근 제안과 F-03 경로 중단 API를 구현했다. 실제 API는 12절을 따른다.
 이슈 #17에서 F-07 신규 도로 누적 100km 칭호를 추가했다. 확정 누적과 완료 사실 계약은 13절을 따른다.
 이슈 #19에서 F-15 급제동 판정을 구현했다. 속도 관측·연속 상태 API는 14절을 따른다.
+이슈 #21에서 F-15 급조향 판정을 구현했다. 각도·속도 관측 API는 15절을 따른다.
 동서해 칭호·나머지 차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
@@ -112,6 +113,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `ProcessTitleFactUseCase` | `suspend process(fact: AchievementFact): TitleUpdate` | 구현됨. 확정 개수 조회·최초 칭호·보상 저장 제안 조합. 11절 참조 |
 | `MetricsCollector` | `process(sample: VehicleSample, position: TrackPosition?): List<DrivingMetrics>` | 위치 연결 가능한 구간 지표 반환. 종료 때 미완료 구간 flush |
 | `HarshBrakeDetector` | `process(state: HarshBrakeState, speed: Observation<Double?>): HarshBrakeUpdate` | 구현됨. F-15 급제동 진입 판정. 저장·구간 집계는 하지 않음. 14절 참조 |
+| `HarshSteerDetector` | `process(state: HarshSteerState, angle: Observation<Double?>, speed: Observation<Double?>?): HarshSteerUpdate` | 구현됨. F-15 급조향 진입 판정. 15절 참조 |
 | `ProcessDriveInputUseCase` | `suspend process(input: DriveInput): ProcessingOutcome` | 순서 조정, 포트 조회, 변경 묶음 저장, 상태 확정 |
 
 아래 타입을 같은 계약 PR에서 정의한다. 각 엔진 담당자가 별도 버전을 만들지 않는다.
@@ -808,3 +810,29 @@ if (fact != null) titles.process(fact)
 - 음수 관측 시각과 모순된 호출자 상태는 IllegalArgumentException으로 거절한다. 엔진은 전달받은 상태를 변경하지 않는다.
   호출자는 반환 상태를 다음 입력에 전달하고, Trip 시작·프로세스 재시작 때 HarshBrakeState()로 초기화한다.
 - Brake 페달 신호는 필수 조건이 아니다. SDK 지원 확인·매핑·저장·실차 검증은 이 API 구현에 포함되지 않는다.
+
+## 15. F-15 급조향 관측 API
+
+이슈 #21의 범위는 급조향 진입 판정이다. 기존 급제동 API·legacy 호출·저장·SDK는 변경하지 않는다.
+
+| 타입·필드 | 의미 |
+| --- | --- |
+| `HarshSteerState(previous = null, active = false)` | 한 Trip·프로세스 세션의 각도 관측 기준과 급조향 진행 여부 |
+| `angle: Observation<Double?>` | 핸들의 연속 부호 있는 각도(deg)와 원본 단조 관측 시각. 음수·360도 초과 각도 허용 |
+| `speed: Observation<Double?>?` | 각도 관측 시각에 이용 가능한 최신 차량 속도(m/s)와 원본 단조 관측 시각. 미지원·결측은 null |
+| `HarshSteerUpdate(state, angularVelocityDegPerSec = null, started = false)` | 다음 상태, 판정 가능한 부호 있는 각속도, 급조향 신규 진입 여부 |
+
+- 각도 입력마다 한 번 호출한다. 호출자는 속도를 원본 시각 순으로 관리하고 오래된 콜백으로 최신 관측을 덮어쓰지 않는다.
+  다른 신호 수신 시 캐시 속도에 새 시각을 붙이지 않는다. 속도 관측은 각도보다 미래이면 사용할 수 없고, 나이는 5초 이하여야 한다.
+- 두 유효 각도 관측의 간격이 0ms 초과·5,000ms 이하일 때 `(현재 각도−직전 각도)/초`로 계산한다.
+  현재 유효 속도 ≥20/3.6m/s이고 각속도 절댓값 ≥180°/s이면 active=true다. false→true 때만 started=true다.
+  반대 방향 급조향도 기준을 계속 충족하면 같은 한 건이다. 유효 저속 또는 각속도 기준 미만이면 active를 해제한다.
+- 각도·속도 결측, 비유한 각도, 음수/비유한 속도, 속도 신선도 위반은 각도 기준을 null로 비우고 active를 해제한다.
+  복귀 후 두 유효 관측부터 판정하며 미관측 구간을 연결하지 않는다. 각도 간격 5초 초과는 현재 관측을 새 기준으로 삼는다.
+  첫 관측·판정 불가·계산 오버플로는 angularVelocityDegPerSec=null, started=false이며, 0건을 의미하지 않는다.
+- 같은 각도 시각·같은 값은 상태를 유지하고 새 사건을 만들지 않는다. 이때 바뀐 속도 인자로 과거 각도를 재판정하지 않는다.
+  이전 각도 시각 또는 같은 시각의 다른 값은 최신 각도 시각을 유지하면서 각도 기준을 null로 비운다.
+- 음수 관측 시각과 모순된 호출자 상태는 IllegalArgumentException으로 거절한다. 호출자는 반환 상태를 다음 입력에 전달하고,
+  Trip 시작·프로세스 재시작 때 HarshSteerState()로 초기화한다. 엔진 인스턴스는 내부 가변 상태를 갖지 않는다.
+- GPS bearing·차륜 회전각을 핸들 각도로 대체하지 않는다. SDK가 순환 각도를 제공하면 실제 단위·범위 확인 후 어댑터에서
+  연속 각도로 정규화해야 한다. 이 API는 SDK의 각도 범위를 확인했다는 의미가 아니다. 1km 집계·F-13 지표 연결도 후속이다.
