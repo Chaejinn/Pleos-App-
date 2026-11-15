@@ -24,4 +24,6 @@ object DetectionPolicy {
     const val TRIP_START_DURATION_MS = 30_000L
     const val TRIP_STOP_DURATION_MS = 300_000L
     const val PARKED_FALLBACK_DURATION_MS = 10_000L
+    const val HARSH_BRAKE_MPS2 = 3.0
+    const val METRICS_SAMPLE_GAP_MS = 5_000L
 }
