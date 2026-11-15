@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 12 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 13 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -15,6 +15,7 @@ F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #17에서 F-07 신규 도로 누적 100km 칭호를 추가했다. 확정 누적과 완료 사실 계약은 13절을 따른다.
 이슈 #19에서 F-15 급제동 판정을 구현했다. 속도 관측·연속 상태 API는 14절을 따른다.
 이슈 #21에서 F-15 급조향 판정을 구현했다. 각도·속도 관측 API는 15절을 따른다.
+이슈 #23에서 F-15 회전·방향지시등 사용률을 구현했다. 원본 신호·좌우 기준·미관측 계약은 16절을 따른다.
 동서해 칭호·나머지 차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
@@ -114,6 +115,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `MetricsCollector` | `process(sample: VehicleSample, position: TrackPosition?): List<DrivingMetrics>` | 위치 연결 가능한 구간 지표 반환. 종료 때 미완료 구간 flush |
 | `HarshBrakeDetector` | `process(state: HarshBrakeState, speed: Observation<Double?>): HarshBrakeUpdate` | 구현됨. F-15 급제동 진입 판정. 저장·구간 집계는 하지 않음. 14절 참조 |
 | `HarshSteerDetector` | `process(state: HarshSteerState, angle: Observation<Double?>, speed: Observation<Double?>?): HarshSteerUpdate` | 구현됨. F-15 급조향 진입 판정. 15절 참조 |
+| `TurnSignalDetector` | `TurnSignalDetector(positiveAngleDirection: TurnDirection)`, `process(state, input): TurnSignalUpdate` | 구현됨. F-15 회전별 신호 사용·횟수·사용률 판정. 16절 참조 |
 | `ProcessDriveInputUseCase` | `suspend process(input: DriveInput): ProcessingOutcome` | 순서 조정, 포트 조회, 변경 묶음 저장, 상태 확정 |
 
 아래 타입을 같은 계약 PR에서 정의한다. 각 엔진 담당자가 별도 버전을 만들지 않는다.
@@ -836,3 +838,33 @@ if (fact != null) titles.process(fact)
   Trip 시작·프로세스 재시작 때 HarshSteerState()로 초기화한다. 엔진 인스턴스는 내부 가변 상태를 갖지 않는다.
 - GPS bearing·차륜 회전각을 핸들 각도로 대체하지 않는다. SDK가 순환 각도를 제공하면 실제 단위·범위 확인 후 어댑터에서
   연속 각도로 정규화해야 한다. 이 API는 SDK의 각도 범위를 확인했다는 의미가 아니다. 1km 집계·F-13 지표 연결도 후속이다.
+
+## 16. F-15 방향지시등 사용률 API
+
+이슈 #23은 순수 회전 판정과 횟수 기반 사용률을 구현한다. SDK·저장·UI·1km 집계·F-13 연결은 포함하지 않는다.
+
+| 타입·필드 | 의미 |
+| --- | --- |
+| `TurnSignal` | OFF, LEFT, RIGHT, HAZARD. null은 미관측이며 OFF와 다름 |
+| `TurnDirection` | LEFT, RIGHT. 생성자의 positiveAngleDirection은 양수 핸들 각도 방향이며 기본값 없음 |
+| `TurnSignalInput` | Angle(Observation<Double?>), Signal(Observation<TurnSignal?>). 각 원본 단조 시각으로 독립 입력 |
+| `TurnSignalState` | angle·armed 회전 기준, signal·coverageStartMs 신호 관측 구간, lastLeftMs·lastRightMs 최근 일치 근거, usage |
+| `TurnSignalTurn` | direction, signaled: Boolean?, elapsedMs. 감지한 회전 한 건의 원본 시각과 사용 여부 |
+| `TurnSignalUsage` | turnCount, signaledTurnCount, unknownTurnCount, hasUnobservedSteering. record(Boolean?)는 횟수를 한 번 추가 |
+| `TurnSignalUpdate` | state와 turn: TurnSignalTurn?. turn=null은 새 회전 없음 |
+
+- 양수 각도를 LEFT/RIGHT로 매핑하는 SDK 근거는 아직 없다. 확인된 기준을 생성자에 반드시 전달하고 한 스트림에서 고정한다.
+  핸들 각도는 연속 부호 각도이며 GPS bearing이 아니다. legacy의 속도 10km/h 조건은 새 명세에 없으므로 추가하지 않는다.
+- 최초·관측 단절 후에는 절댓값 30도 미만의 각도로 기준을 잡는다. 5초 이하로 이어진 각도에서 90도 이상이 되면 한 건이다.
+  계속 꺾거나 반대 방향으로 넘어가도 30도 미만 복귀를 관측하기 전에는 추가하지 않는다. 정확히 90도 포함, 정확히 30도 제외.
+- 동일 시각·동일 값의 각도/신호는 무시한다. 각도 역순·동시각 충돌·결측·비유한 값·5초 초과 공백은 회전 기준을 끊는다.
+  신호 역순·동시각 충돌·null·5초 초과 공백은 신호 관측 구간과 좌우 근거를 끊는다. 역순 입력으로 최신 시각을 되돌리지 않는다.
+- 직전 5초 안에 회전 방향과 맞는 LEFT/RIGHT 원본 관측이 있으면 signaled=true다. 정확히 5초 포함.
+  이후 OFF·반대 방향·HAZARD가 와도 그 전 정상 일치 신호의 근거는 창 안에서 유지한다. HAZARD 자체는 어느 방향에도 사용으로 세지 않는다.
+- 신호가 미래이거나 마지막 유효 관측이 5초 초과면 판정하지 않는다. 일치 근거가 없을 때 false는 직전 5초를
+  5초 이하 간격의 유효 신호로 관측한 경우에만 반환한다. 짧은 관측·미지원·결측은 signaled=null이다.
+- rate는 signaledTurnCount / turnCount다. 회전 0건·신호 미관측 회전 포함·핸들 관측 누락이면 null이며 미관측 횟수를 0건으로 꾸미지 않는다.
+  관측이 끊겨 숨었을 수 있는 회전 횟수를 추측해 더하지 않는다. 한 집계의 핸들 관측 불완전 표시는 이후 정상 입력으로 지우지 않는다.
+- 반환 상태를 다음 입력에 전달한다. 나중에 신호가 도착해도 이미 감지한 회전을 재분류하지 않는다. Trip·프로세스 세션 시작 때
+  TurnSignalState()로 초기화한다. 엔진은 내부 가변 상태가 없으며 계수 오버플로·모순된 호출자 상태·음수 시각은 명시적으로 실패한다.
+  최신 시각의 LEFT/RIGHT 이력은 실제 최신 신호와 양방향으로 일치해야 한다. OFF·HAZARD를 같은 시각의 방향 사용 근거로 만들 수 없다.
