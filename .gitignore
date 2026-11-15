@@ -12,3 +12,6 @@ captures/
 *.jks
 .local/
 *.mp4
+.env
+.env.*
+!.env.example

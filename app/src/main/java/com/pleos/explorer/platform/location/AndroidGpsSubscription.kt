@@ -22,7 +22,7 @@ fun Location.toRecordingSample() = LocationSample(
     accuracyM = if (hasAccuracy()) accuracy.toDouble() else null,
 )
 
-/** GPS-only diagnostic input. Does not call lastKnownLocation or convert Pleos confidence. */
+/** GPS subscription for recording and diagnostics; Pleos provider availability requires device verification. */
 class AndroidGpsSubscription(private val context: Context) {
     private var manager: LocationManager? = null
     private var listener: LocationListener? = null

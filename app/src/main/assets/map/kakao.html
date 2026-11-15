@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://*.kakao.com https://*.daumcdn.net https://*.kakaocdn.net https://*.daum.net; style-src 'unsafe-inline'; img-src https: data:; connect-src https://*.kakao.com https://*.daumcdn.net https://*.kakaocdn.net https://*.daum.net;">
+<style>
+html,body{margin:0;width:100%;height:100%;min-height:100vh;font-family:sans-serif}#map{width:100%;height:100vh;min-height:300px}body{background:#edf2ef}
+#status{position:absolute;inset:20px;z-index:5;font-size:24px;color:#173c31;background:#f7faf8;padding:20px;border-radius:16px;height:fit-content}
+#zoom{position:absolute;right:12px;top:12px;z-index:4;display:none}button{display:block;min-width:76px;min-height:76px;font-size:28px;background:white;border:1px solid #ccc;border-radius:12px}
+.info{padding:16px;font-size:24px;max-width:260px;line-height:1.5;white-space:normal}.info strong{display:block}
+</style></head><body><div id="map" aria-label="카카오 탐험 지도"></div><div id="status" role="status">카카오지도를 불러오고 있어요</div>
+<div id="zoom"><button aria-label="확대" onclick="zoom(-1)">+</button><button aria-label="축소" onclick="zoom(1)">−</button></div>
+<script>
+'use strict';
+let map, cluster, info, lines=[], current, pending, lastFocus, markerSignature;
+const statusBox=document.getElementById('status');
+function fail(){statusBox.hidden=false;statusBox.textContent='지도를 불러오지 못했어요. 네트워크와 카카오 키·등록 도메인을 확인해 주세요. 기록과 수집은 계속 사용할 수 있어요.';}
+function point(p){return new kakao.maps.LatLng(p[0],p[1]);}
+function zoom(delta){if(map)map.setLevel(Math.max(1,Math.min(14,map.getLevel()+delta)));}
+window.roadlogUpdate=function(data){pending=data;if(!map)return;
+  lines.forEach(line=>line.setMap(null));lines=[];
+  [['past','#a5b4cc'],['today','#6750a4']].forEach(([key,color])=>data[key].forEach(points=>{
+    if(points.length>1)lines.push(new kakao.maps.Polyline({map,path:points.map(point),strokeWeight:5,strokeColor:color,strokeOpacity:.9}));
+  }));
+  map.setDraggable(!data.follow);map.setZoomable(true);
+  const signature=JSON.stringify([data.follow,data.landmarks]);
+  if(signature!==markerSignature){
+    markerSignature=signature;cluster.clear();if(info)info.close();
+    if(!data.follow)cluster.addMarkers(data.landmarks.map(item=>{
+      const svg='<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44"><circle cx="22" cy="22" r="18" fill="'+(item.collected?'#176b53':'#6750a4')+'" stroke="white" stroke-width="4"/><text x="22" y="29" text-anchor="middle" font-size="23" fill="white">'+(item.collected?'✓':'•')+'</text></svg>';
+      const marker=new kakao.maps.Marker({position:point([item.lat,item.lon]),title:item.name,
+        image:new kakao.maps.MarkerImage('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg),new kakao.maps.Size(44,44))});
+      kakao.maps.event.addListener(marker,'click',()=>{
+        if(pending.follow)return;
+        const content=document.createElement('div');content.className='info';
+        const name=document.createElement('strong');name.textContent=item.name;content.appendChild(name);
+        const text=document.createElement('span');text.textContent=item.region+' · '+(item.collected?'수집 완료':'미수집')+' · 반경 '+item.radiusM+'m';content.appendChild(text);
+        info.setContent(content);info.open(map,marker);
+      });return marker;
+    }));
+  }
+  if(current)current.setMap(null);
+  if(data.follow&&data.focus)current=new kakao.maps.Marker({map,position:point(data.focus),title:'현재 위치'});
+  const nextFocus=JSON.stringify(data.focus);
+  if(data.focus&&(nextFocus!==lastFocus||data.follow)){map.setCenter(point(data.focus));if(!lastFocus)map.setLevel(5);lastFocus=nextFocus;}
+};
+function start(){
+  if(!window.kakao||!kakao.maps){fail();return;}
+  kakao.maps.load(()=>{try{
+    map=new kakao.maps.Map(document.getElementById('map'),{center:point([36.2,127.7]),level:13});
+    cluster=new kakao.maps.MarkerClusterer({map,averageCenter:true,minLevel:8});
+    info=new kakao.maps.InfoWindow({removable:true});
+    statusBox.hidden=true;document.getElementById('zoom').style.display='block';
+    if(pending)window.roadlogUpdate(pending);
+    window.addEventListener('resize',()=>map.relayout());
+    new ResizeObserver(()=>map.relayout()).observe(document.getElementById('map'));
+  }catch(error){fail();}});
+}
+setTimeout(()=>{if(!map)fail();},20000);
+</script>
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=__KAKAO_KEY__&amp;autoload=false&amp;libraries=clusterer" onload="start()" onerror="fail()"></script>
+</body></html>

@@ -1,5 +1,18 @@
 # 현재 코드 구조와 변경 규칙
 
+## 2026-11-15 추가 연결
+
+후속 칭호·고스트·주행 상태기계·저장 원자성 연결은 [주행 통합 반복 검증](DRIVE_INTEGRATION_LOOPS.md)을 따른다. 이전 단계의 Android 미연결 설명보다 이 기록이 최신이며, 실제 Pleos SDK 입력 전환 완료를 뜻하지 않는다.
+
+origin/main 92779e2의 F-02·05·07·12·13 도메인 소스를 로컬에 반영했다. Android 방문 저장·도감 연결은 [지역 통합 기록](REGION_ANDROID_INTEGRATION.md)을 따른다. 아래 이전 구현 범위 중 도메인 미수령·도감 준비 화면 설명은 이 날짜의 추가 연결로 갱신된다. 실제 경계 자료는 아직 없어 현 화면은 데이터 준비 안내를 표시한다.
+
+- data/catalog/RegionCatalogLoader.kt: manifest·GeoJSON·asset 검증, 인덱스 생성.
+- data/local/recording/RoomTrackRecordingStore.kt: F-05 snapshot·배지·방문·미확인 보상 암호화 저장 어댑터.
+- service/RegionVisitSession.kt: 승인 GPS/F-03 결과를 방문 엔진에 순차 전달.
+- presentation/collection/CollectionScreen.kt: 지역 목록·획득 상태·횟수·보상 확인.
+
+F-02·07·12·13은 도메인 코드가 존재하지만 Android 저장·실제 입력·화면 통합이 완료된 것은 아니다.
+
 기준일: 2026-11-14 · 기준: 팀 문서 PR #1, F-03 PR #4 및 로컬 앱 연결
 
 ## 경로 기준

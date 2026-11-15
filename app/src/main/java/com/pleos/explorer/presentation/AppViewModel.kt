@@ -54,7 +54,7 @@ class AppViewModel(
     }
 
     fun deleteAll() {
-        if (!canInteract()) return
+        if (!canInteract() || drive.value.monitoring) return
         driveStatus.deleting = true
         viewModelScope.launch {
             try {
@@ -73,7 +73,7 @@ class AppViewModel(
         if (!granted || canInteract()) change(allowRestricted = !granted) { settingsRepository.setRecordingConsent(granted) }
     }
     fun deleteTrip(id: String) {
-        if (!canInteract()) return
+        if (!canInteract() || drive.value.monitoring) return
         driveStatus.deleting = true
         viewModelScope.launch {
             try {
@@ -90,8 +90,10 @@ class AppViewModel(
     }
     fun deleteRecording(id: String) = editRecording { reports.deleteRecording(id) }
     fun finishInterrupted(id: String) = editRecording { reports.finishInterrupted(id) }
-    private fun editRecording(action: suspend () -> Unit) {
+    fun acknowledgeReward(id: String) = editRecording(allowMonitoring = true) { reports.acknowledgeReward(id) }
+    private fun editRecording(allowMonitoring: Boolean = false, action: suspend () -> Unit) {
         if (!canInteract() ||
+            (!allowMonitoring && drive.value.monitoring) ||
             !settings.value.recordingConsentGranted) return
         driveStatus.deleting = true
         viewModelScope.launch {
@@ -105,6 +107,8 @@ class AppViewModel(
         }
     }
     fun clearError() { mutableError.value = null }
+    fun acknowledgeLandmark(key: String) = editRecording(allowMonitoring=true) { reports.acknowledgeLandmark(key) }
+    fun acknowledgeTitle(key: String) = editRecording(allowMonitoring=true) { reports.acknowledgeTitle(key) }
     private fun canInteract() = uxAccess.value.canShowDetails && !drive.value.running &&
         !drive.value.finishing && !drive.value.deleting
     private fun change(allowRestricted: Boolean = false, action: suspend () -> Unit) {

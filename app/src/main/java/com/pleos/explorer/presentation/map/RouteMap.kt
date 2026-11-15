@@ -37,8 +37,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 internal fun RouteMap(past: List<PathSegment>, today: List<PathSegment>, focus: GeoPoint?,
-    modifier: Modifier = Modifier, follow: Boolean = false) {
+    modifier: Modifier = Modifier, follow: Boolean = false,
+    landmarks: List<com.pleos.explorer.domain.model.legacy.Landmark> = emptyList(), collectedIds: Set<String> = emptySet(),
+    landmarkVisits: List<com.pleos.explorer.domain.model.LandmarkVisit> = emptyList()) {
     val availability = kakaoMapAvailability(BuildConfig.KAKAO_NATIVE_APP_KEY, Build.SUPPORTED_ABIS.toList())
+    if (BuildConfig.KAKAO_JAVASCRIPT_APP_KEY.isNotBlank() &&
+        (availability != KakaoMapAvailability.READY || Build.SUPPORTED_ABIS.firstOrNull()?.startsWith("x86") == true)) {
+        KakaoWebMap(past, today, focus, landmarks, collectedIds, modifier, follow)
+        return
+    }
     if (availability != KakaoMapAvailability.READY) {
         Text("현재 지도를 표시할 수 없어요. 경로 기록과 조회는 계속 사용할 수 있어요.", fontSize = 24.sp)
         if (BuildConfig.DEBUG) Text(when (availability) {
@@ -48,12 +55,13 @@ internal fun RouteMap(past: List<PathSegment>, today: List<PathSegment>, focus: 
         return
     }
     var retry by remember { mutableIntStateOf(0) }
-    key(retry) { KakaoRouteMap(past, today, focus, modifier, follow, onRetry = { retry++ }) }
+    key(retry) { KakaoRouteMap(past, today, focus, modifier, follow, landmarks, collectedIds, landmarkVisits,onRetry = { retry++ }) }
 }
 
 @Composable
 private fun KakaoRouteMap(past: List<PathSegment>, today: List<PathSegment>, focus: GeoPoint?,
-    modifier: Modifier, follow: Boolean, onRetry: () -> Unit) {
+    modifier: Modifier, follow: Boolean, landmarks: List<com.pleos.explorer.domain.model.legacy.Landmark>,
+    collectedIds: Set<String>, landmarkVisits: List<com.pleos.explorer.domain.model.LandmarkVisit>,onRetry: () -> Unit) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val uri = LocalUriHandler.current
@@ -73,6 +81,9 @@ private fun KakaoRouteMap(past: List<PathSegment>, today: List<PathSegment>, foc
     var map by remember(view) { mutableStateOf<KakaoMap?>(null) }
     var failed by remember(view) { mutableStateOf(false) }
     var focused by remember(view) { mutableStateOf(false) }
+    var previousFocus by remember(view) { mutableStateOf<GeoPoint?>(null) }
+    var selectedId by remember(view) { mutableStateOf<String?>(null) }
+    val currentFollow by rememberUpdatedState(follow)
     var marker by remember(view) { mutableStateOf<Label?>(null) }
     val markerBitmap = remember(view) {
         val size = (24 * context.resources.displayMetrics.density).toInt().coerceAtLeast(24)
@@ -119,6 +130,10 @@ private fun KakaoRouteMap(past: List<PathSegment>, today: List<PathSegment>, foc
                             value.setGestureEnable(GestureType.Tilt, false)
                             value.setGestureEnable(GestureType.LongTapAndDrag, false)
                             readyMap = value
+                            value.setOnLabelClickListener { _, _, label ->
+                                if (!currentFollow) { selectedId = label.tag as? String }
+                                return@setOnLabelClickListener !currentFollow
+                            }
                             map = value
                         } catch (_: Exception) { failed = true }
                     }
@@ -161,15 +176,44 @@ private fun KakaoRouteMap(past: List<PathSegment>, today: List<PathSegment>, foc
                     marker = requireNotNull(labels.layer).addLabel(LabelOptions.from(position).setStyles(styles))
                 } else oldMarker.moveTo(position)
             } else { marker?.remove(); marker = null }
-            if (focus != null && (!focused || follow)) {
+            if (focus != null && (!focused || follow || previousFocus != focus)) {
                 val position = LatLng.from(focus.latitudeDeg, focus.longitudeDeg)
                 nativeMap.moveCamera(if (focused) CameraUpdateFactory.newCenterPosition(position)
                     else CameraUpdateFactory.newCenterPosition(position, 15))
                 focused = true
+                previousFocus = focus
             }
         } catch (_: Exception) { failed = true }
     }
+    LaunchedEffect(map, landmarks, collectedIds, follow) {
+        val nativeMap = map ?: return@LaunchedEffect
+        try {
+            val manager = requireNotNull(nativeMap.labelManager)
+            val layer = requireNotNull(manager.getLayer("landmarks") ?: manager.addLayer(
+                com.kakao.vectormap.label.LabelLayerOptions.from("landmarks")))
+            layer.removeAll()
+            if (!follow) {
+                fun icon(color: Int): Bitmap = Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888).apply {
+                    val canvas = Canvas(this)
+                    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = Color.WHITE }
+                    canvas.drawCircle(24f, 24f, 23f, paint)
+                    paint.color = color
+                    canvas.drawCircle(24f, 24f, 18f, paint)
+                }
+                val collectedStyle = manager.addLabelStyles(LabelStyles.from(LabelStyle.from(icon(Color.rgb(23, 107, 83)))))
+                val availableStyle = manager.addLabelStyles(LabelStyles.from(LabelStyle.from(icon(Color.rgb(103, 80, 164)))))
+                landmarks.forEach { landmark ->
+                    layer.addLabel(LabelOptions.from(landmark.id, LatLng.from(landmark.lat, landmark.lon))
+                        .setStyles(if (landmark.id in collectedIds) collectedStyle else availableStyle)
+                        .setClickable(true).setTag(landmark.id))
+                }
+            } else selectedId = null
+        } catch (_: Exception) { failed = true }
+    }
     AndroidView(factory = { view }, modifier = modifier.fillMaxWidth().height(mapHeight))
+    if (!follow) landmarks.firstOrNull { it.id == selectedId }?.let { landmark ->
+        com.pleos.explorer.presentation.collection.LandmarkDetails(landmark,landmarkVisits.firstOrNull { it.landmarkId==landmark.id && !it.isReplay }, onDismiss = { selectedId = null })
+    }
     if (map == null && !failed) Text("카카오지도를 불러오고 있어요", fontSize = 24.sp)
     if (failed) {
         Text("카카오지도를 불러오지 못했어요. 경로 기록은 계속 사용할 수 있어요.", fontSize = 24.sp)

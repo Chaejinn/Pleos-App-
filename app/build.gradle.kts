@@ -14,10 +14,20 @@ val kakaoProperties = Properties().apply {
     val file = rootProject.file(".local/kakao.properties")
     if (file.exists()) file.inputStream().use { load(it) }
 }
+val envProperties = Properties().apply {
+    val file = rootProject.file(".env")
+    if (file.exists()) file.reader(Charsets.UTF_8).use { load(it) }
+}
+fun String.envValue(): String = trim().removeSurrounding("\"").removeSurrounding("'").trim()
 val kakaoNativeAppKey = providers.environmentVariable("KAKAO_NATIVE_APP_KEY")
-    .orElse(kakaoProperties.getProperty("nativeAppKey", "")).get().trim()
+    .orElse(envProperties.getProperty("KAKAO_NATIVE_APP_KEY", kakaoProperties.getProperty("nativeAppKey", ""))).get().envValue()
 require(kakaoNativeAppKey.isEmpty() || kakaoNativeAppKey.matches(Regex("[A-Za-z0-9]+"))) {
     "Invalid Kakao native app key format"
+}
+val kakaoJavascriptAppKey = providers.environmentVariable("KAKAO_JAVASCRIPT_APP_KEY")
+    .orElse(envProperties.getProperty("KAKAO_JAVASCRIPT_APP_KEY", "")).get().envValue()
+require(kakaoJavascriptAppKey.isEmpty() || kakaoJavascriptAppKey.matches(Regex("[A-Za-z0-9]+"))) {
+    "Invalid Kakao JavaScript app key format"
 }
 
 android {
@@ -32,6 +42,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"$kakaoNativeAppKey\"")
+        buildConfigField("String", "KAKAO_JAVASCRIPT_APP_KEY", "\"$kakaoJavascriptAppKey\"")
         javaCompileOptions {
             annotationProcessorOptions {
                 arguments["room.schemaLocation"] = "$projectDir/schemas"
@@ -75,6 +86,7 @@ android {
 dependencies {
     implementation(libs.kakaomap)
     implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
     annotationProcessor(libs.room.compiler)
     implementation(libs.gson)
     implementation(project(":domain"))

@@ -20,6 +20,7 @@ tts = "3.3.1"
 [libraries]
 kakaomap = { module = "com.kakao.maps.open:android", version.ref = "kakaomap" }
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 androidx-core = { module = "androidx.core:core-ktx", version.ref = "core" }

@@ -33,6 +33,7 @@ import kotlin.math.abs
 class PleosVehicleSource(
     private val context: Context,
     private val onStatus: (String, String) -> Unit = { _, _ -> },
+    private val onTripVehicle: (com.pleos.explorer.domain.model.TripVehicleSample) -> Unit = {},
 ) : VehicleSignalSource {
     private val handler = Handler(Looper.getMainLooper())
     private var emit: ((VehicleSignal) -> Unit)? = null
@@ -47,6 +48,7 @@ class PleosVehicleSource(
     private var fuelSubscribed = false
     private var evSubscribed = false
     private var naviConnected = false
+    private var gearQueryPending = false
 
     private fun now() = SystemClock.elapsedRealtime()
     private fun dispatch(block: () -> Unit) {
@@ -88,6 +90,10 @@ class PleosVehicleSource(
     }
     private val gear = object : GearSelectionListener {
         override fun onSelected(value: VehicleGear?) = dispatch {
+            val observed = now()
+            val actual = mapPleosTripGear(value)
+            if (actual != null) onTripVehicle(com.pleos.explorer.domain.model.TripVehicleSample(
+                System.currentTimeMillis(), observed, gear = actual))
             val state = when (value) {
                 VehicleGear.GEAR_PARK -> GearState.PARK
                 VehicleGear.GEAR_REVERSE -> GearState.REVERSE
@@ -143,12 +149,43 @@ class PleosVehicleSource(
             if (!v.isFinite()) return@dispatch
             speedMps = abs(v)
             speedAt = now()
+            onTripVehicle(com.pleos.explorer.domain.model.TripVehicleSample(
+                System.currentTimeMillis(), speedAt, speedMps = abs(v).toDouble()))
             onStatus("속도", "신호 수신")
             emitPosition()
         }
         override fun onErrorEvent(propertyId: Int, areaId: Int) = dispatch {
             speedMps = null
             onStatus("속도", "신호 오류")
+        }
+    }
+    private val parkingBrake = object : CarPropertyManager.CarPropertyEventCallback {
+        override fun onChangeEvent(value: CarPropertyValue<*>) = dispatch {
+            if (value.status != CarPropertyValue.STATUS_AVAILABLE) {
+                onStatus("주차브레이크","신호 사용 불가")
+                return@dispatch
+            }
+            val engaged = value.value as? Boolean ?: return@dispatch
+            onTripVehicle(com.pleos.explorer.domain.model.TripVehicleSample(
+                System.currentTimeMillis(),now(),parkingBrakeEngaged = engaged))
+            onStatus("주차브레이크","신호 수신")
+        }
+        override fun onErrorEvent(propertyId: Int, areaId: Int) = status("주차브레이크","신호 오류")
+    }
+    private val pollGear = object : Runnable {
+        override fun run() {
+            if (emit == null) return
+            val v = vehicle
+            if (v != null && !gearQueryPending) {
+                gearQueryPending = true
+                try {
+                    v.getGear().getCurrentGearSelectionState({ value -> dispatch {
+                        gearQueryPending = false
+                        gear.onSelected(value)
+                    } }, { error -> dispatch { gearQueryPending = false; failure("기어",error) } })
+                } catch (error: Exception) { gearQueryPending = false; failure("기어",error) }
+            }
+            handler.postDelayed(this,1000)
         }
     }
     private val navigation = object : NaviHelperEventListener {
@@ -180,6 +217,7 @@ class PleosVehicleSource(
             attempt("브레이크") { v.getBrake().registerBrakePedalStatus(brake) }
             attempt("방향지시등") { v.getTurnSignal().registerTurnSignalState(turn) }
             attempt("기어") { v.getGear().registerGearSelection(gear) }
+            handler.post(pollGear)
             // 연비와 전비를 같은 기록에 섞지 않고 읽기 가능한 한 종류만 선택한다.
             v.getFuel().checkInstantaneousFuelEconomyCapabilities({ config -> dispatch {
                 if (config.accessType == AccessType.READ || config.accessType == AccessType.READ_WRITE) {
@@ -196,9 +234,12 @@ class PleosVehicleSource(
                 } else attempt("속도") {
                     val manager = connectedCar.getCarManager(Car.PROPERTY_SERVICE) as CarPropertyManager
                     properties = manager
-                    check(manager.registerCallback(speed, VehiclePropertyIds.PERF_VEHICLE_SPEED, 10f)) {
+                    attempt("속도") { check(manager.registerCallback(speed, VehiclePropertyIds.PERF_VEHICLE_SPEED, 10f)) {
                         "차량 속도 구독이 지원되지 않습니다"
-                    }
+                    } }
+                    attempt("주차브레이크") { check(manager.registerCallback(parkingBrake,VehiclePropertyIds.PARKING_BRAKE_ON,0f)) {
+                        "주차브레이크 구독이 지원되지 않습니다"
+                    } }
                 }
             } }
         }
@@ -224,7 +265,9 @@ class PleosVehicleSource(
         emit = null
         handler.removeCallbacksAndMessages(null)
         naviConnected = false
+        gearQueryPending = false
         properties?.let { runCatching { it.unregisterCallback(speed) } }
+        properties?.let { runCatching { it.unregisterCallback(parkingBrake) } }
         car?.let { runCatching { it.disconnect() } }
         position.stop()
         navi?.let { n ->

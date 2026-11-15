@@ -15,7 +15,10 @@ class AppGraph(context: Context) {
     val uxAccessGate = com.pleos.explorer.platform.ux.UxAccessGate()
     private val applicationContext = context.applicationContext
     val trackRecordingStore by lazy { RoomTrackRecordingStore.create(applicationContext) }
-    fun newTrackRecordingUseCase() = RecordTrackUseCase(trackRecordingStore,
+    val regionCatalog by lazy { com.pleos.explorer.data.catalog.RegionCatalogLoader.load(applicationContext) }
+    fun newTrackRecordingUseCase(source: com.pleos.explorer.data.local.recording.RecordingInputSource = com.pleos.explorer.data.local.recording.RecordingInputSource.UNKNOWN) = RecordTrackUseCase(com.pleos.explorer.data.local.recording.SourcedTrackStore(trackRecordingStore,source),
+        TrackRecorder(IdGenerator { java.util.UUID.randomUUID().toString() }))
+    fun newGpsTrackRecordingUseCase() = RecordTrackUseCase(trackRecordingStore.gpsTracks,
         TrackRecorder(IdGenerator { java.util.UUID.randomUUID().toString() }))
     val settingsRepository: SettingsRepository = PreferenceSettingsRepository(context)
     val driveStatus = DriveStatus()

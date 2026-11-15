@@ -71,7 +71,7 @@ class ReportActivity : ComponentActivity() {
     private fun startDrive(mode: String) {
         if (!graph.uxAccessGate.state.value.canShowDetails) return
         if (!graph.settingsRepository.settings.value.recordingConsentGranted) return
-        if (graph.driveStatus.running || graph.driveStatus.finishing || graph.driveStatus.deleting) return
+        if (graph.driveStatus.running || graph.driveStatus.monitoring || graph.driveStatus.finishing || graph.driveStatus.deleting) return
         if (mode == RoadLogService.MODE_VEHICLE &&
             !packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
             Toast.makeText(this, R.string.vehicle_environment_required, Toast.LENGTH_LONG).show()
@@ -92,7 +92,7 @@ class ReportActivity : ComponentActivity() {
     private fun launchDrive(mode: String) {
         if (!graph.uxAccessGate.state.value.canShowDetails ||
             !graph.settingsRepository.settings.value.recordingConsentGranted ||
-            graph.driveStatus.running || graph.driveStatus.finishing || graph.driveStatus.deleting) return
+            graph.driveStatus.running || graph.driveStatus.monitoring || graph.driveStatus.finishing || graph.driveStatus.deleting) return
         try {
             startForegroundService(Intent(this, RoadLogService::class.java).putExtra(RoadLogService.EXTRA_MODE, mode))
         } catch (error: IllegalStateException) {
@@ -110,7 +110,7 @@ class ReportActivity : ComponentActivity() {
 
     private fun requiredPermissions(mode: String): List<String> {
         val permissions = mutableListOf<String>()
-        if (mode == RoadLogService.MODE_GPS_DEBUG) permissions += Manifest.permission.ACCESS_FINE_LOCATION
+        if (mode in setOf(RoadLogService.MODE_GPS_DEBUG,RoadLogService.MODE_VEHICLE,RoadLogService.MODE_EXPLORATION)) permissions += Manifest.permission.ACCESS_FINE_LOCATION
         if (graph.settingsRepository.settings.value.ttsEnabled &&
             packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
             permissions += "pleos.car.permission.TTS_SERVICE"

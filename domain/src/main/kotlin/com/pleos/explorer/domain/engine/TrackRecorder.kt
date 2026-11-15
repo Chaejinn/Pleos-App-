@@ -97,6 +97,15 @@ class TrackRecorder(
             validation = validation)
     }
 
+    fun interrupt(state: RecordingSnapshot, inputSequence: Long): TrackUpdate {
+        check(state.status == TripStatus.ACTIVE)
+        require(inputSequence > state.lastInputSequence)
+        val points = mutableListOf<TrackPoint>()
+        val next = flushTail(state, points).copy(revision = Math.addExact(state.revision, 1),
+            lastInputSequence = inputSequence, continuityBroken = true)
+        return TrackUpdate(next, points.toList())
+    }
+
     fun resume(state: RecordingSnapshot, sessionId: String): TrackUpdate {
         check(state.status == TripStatus.ACTIVE)
         require(sessionId.isNotBlank() && sessionId != state.sessionId)

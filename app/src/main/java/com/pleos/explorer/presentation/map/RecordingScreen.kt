@@ -16,7 +16,9 @@ internal fun RecordingScreen(mode: String?, onStop: () -> Unit, allowDebugStop: 
     if (onlineMapEnabled && drive?.currentPoint != null && allowDebugStop) {
         RouteMap(emptyList(), drive.livePath, drive.currentPoint, follow = true)
     }
-    if (BuildConfig.DEBUG && allowDebugStop && mode != RoadLogService.MODE_VEHICLE) {
-        ActionButton(if (mode == RoadLogService.MODE_GPS_DEBUG) "위치 기록 종료" else "가상 주행 종료", onClick = onStop)
+    if (allowDebugStop && mode != RoadLogService.MODE_VEHICLE &&
+        (BuildConfig.DEBUG || mode == RoadLogService.MODE_EXPLORATION)) {
+        ActionButton(if (mode == RoadLogService.MODE_GPS_DEBUG || mode == RoadLogService.MODE_EXPLORATION)
+            "탐험 종료" else "가상 주행 종료", onClick = onStop)
     }
 }

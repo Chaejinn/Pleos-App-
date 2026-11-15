@@ -1,4 +1,4 @@
-﻿package com.pleos.explorer.presentation.archive
+package com.pleos.explorer.presentation.archive
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,7 +26,7 @@ import kotlin.math.cos
 
 @Composable
 internal fun RecordingArchiveScreen(records: List<RecordingSnapshot>, sources: Map<String, RecordingInputSource>, enabled: Boolean,
-    onDelete: (String) -> Unit, onFinishInterrupted: (String) -> Unit) {
+    onDelete: (String) -> Unit, onFinishInterrupted: (String) -> Unit, allowChanges: Boolean = true) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var deletingId by rememberSaveable { mutableStateOf<String?>(null) }
     Text("검증 경로 기록", fontSize = 28.sp)
@@ -34,7 +34,7 @@ internal fun RecordingArchiveScreen(records: List<RecordingSnapshot>, sources: M
     if (records.isEmpty()) Text("저장된 검증 경로가 없어요", fontSize = 24.sp)
     val selected = records.firstOrNull { it.trip.id == selectedId }
     if (selected == null) records.forEach { record ->
-        val status = if (record.status == TripStatus.ACTIVE) "중단 기록" else "완료"
+        val status = if (record.status == TripStatus.ACTIVE) (if (allowChanges) "중단 기록" else "기록 중") else "완료"
         val source = sources[record.trip.id] ?: RecordingInputSource.UNKNOWN
         ActionButton("${date(record.trip.startedAtMs)} · $status · ${source.label}", enabled,
             onClick = { selectedId = record.trip.id })
@@ -46,12 +46,13 @@ internal fun RecordingArchiveScreen(records: List<RecordingSnapshot>, sources: M
         Text(String.format(Locale.KOREA, "승인 경로 %.0fm · %d개 경로 구간", trip.distanceM,
             trip.simplifiedPath.size), fontSize = 24.sp)
         if (selected.status == TripStatus.ACTIVE) {
-            Text("중단된 기록입니다. 저장된 지점까지만 복구하여 종료할 수 있어요.", fontSize = 24.sp)
-            ActionButton("저장된 지점으로 복구 종료", enabled, onClick = { onFinishInterrupted(trip.id) })
+            Text(if (allowChanges) "중단된 기록입니다. 저장된 지점까지만 복구하여 종료할 수 있어요."
+                else "진행 중인 기록이에요. 기록 대기를 종료한 후 복구 종료할 수 있어요.", fontSize = 24.sp)
+            ActionButton("저장된 지점으로 복구 종료", enabled && allowChanges, onClick = { onFinishInterrupted(trip.id) })
         } else {
             Text("저장 경로 미리보기 · 지도 배경 없음", fontSize = 24.sp)
             SavedPath(selected)
-            ActionButton("이 경로 기록 삭제", enabled, onClick = { deletingId = trip.id })
+            ActionButton("이 경로 기록 삭제", enabled && allowChanges, onClick = { deletingId = trip.id })
         }
         ActionButton("경로 목록으로", onClick = { selectedId = null })
     }
@@ -59,7 +60,7 @@ internal fun RecordingArchiveScreen(records: List<RecordingSnapshot>, sources: M
     if (id != null) AlertDialog(onDismissRequest = { deletingId = null },
         title = { Text("경로 기록을 삭제할까요?", fontSize = 24.sp) },
         text = { Text("선택한 주행과 원본 경로를 삭제합니다. 누적 탐험 기록은 유지합니다.", fontSize = 24.sp) },
-        confirmButton = { TextButton(enabled = enabled, onClick = { onDelete(id); deletingId = null; selectedId = null }) {
+        confirmButton = { TextButton(enabled = enabled && allowChanges, onClick = { onDelete(id); deletingId = null; selectedId = null }) {
             Text("삭제", fontSize = 24.sp)
         } }, dismissButton = { TextButton(onClick = { deletingId = null }) { Text("취소", fontSize = 24.sp) } })
 }

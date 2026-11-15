@@ -6,6 +6,8 @@ import kotlinx.coroutines.flow.update
 
 data class DriveUiState(
     val running: Boolean = false,
+    val monitoring: Boolean = false,
+    val dataRevision: Long = 0,
     val deleting: Boolean = false,
     val finishing: Boolean = false,
     val hasDeparted: Boolean = false,
@@ -19,6 +21,10 @@ data class DriveUiState(
 class DriveStatus {
     private val mutableState = MutableStateFlow(DriveUiState())
     val state = mutableState.asStateFlow()
+    var monitoring: Boolean
+        get() = state.value.monitoring
+        internal set(value) { mutableState.update { it.copy(monitoring = value) } }
+    fun recordsChanged() { mutableState.update { it.copy(dataRevision = it.dataRevision + 1) } }
     var deleting: Boolean
         get() = state.value.deleting
         internal set(value) { mutableState.update { it.copy(deleting = value) } }

@@ -1,5 +1,11 @@
 # A 담당 규격 전환 기록
 
+## 2026-11-15 현재 진행
+
+- 원격 main 92779e2까지의 F-02·05·07·12·13 도메인 코드·계약을 로컬 반영했다. merge commit·push는 생성하지 않았다.
+- F-05 방문 저장 어댑터, 카탈로그 manifest/GeoJSON 검증, 승인 GPS 입력 연결, 도감·미확인 배지 확인을 추가했다. 범위·한계·검증은 REGION_ANDROID_INTEGRATION.md 참고.
+- 실제 지역 경계 파일과 카카오 키는 아직 없으며 실제 방문·지도 시연 완료로 표시하지 않는다.
+
 ## 반영 기준
 
 - 문서 PR: https://github.com/Chaejinn/Pleos-App-/pull/1

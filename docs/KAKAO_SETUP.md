@@ -1,5 +1,22 @@
 # 카카오 지도 연결
 
+## 2026-11-15 환경변수·웹 지도 통합
+
+현민의 merge_jhmin 7b8387b 버전에서 .env 로딩과 x86용 JavaScript 지도 경로를 반영했다. 프로젝트 루트 .env.example을 .env로 복사하고 아래 두 항목을 설정한다. 실제 .env는 Git 제외다.
+
+```properties
+KAKAO_NATIVE_APP_KEY=
+KAKAO_JAVASCRIPT_APP_KEY=
+```
+
+- x86 에뮬레이터 웹 지도에는 JavaScript 키를 사용한다. 카카오 웹 플랫폼 도메인에 https://appassets.androidplatform.net 을 등록한다.
+- 네이티브 지도에는 Native 앱 키와 Android 패키지 com.roadlog.app 및 서명 키 해시를 등록한다. debug/release 해시는 .local/kakao-registration.txt에 있다.
+- 우선순위는 해당 프로세스 환경변수 → .env다. Native 키는 기존 .local/kakao.properties의 nativeAppKey도 마지막 대체 설정으로 읽는다.
+- 값 변경 후 Gradle 빌드·APK 재설치가 필요하다. 키를 로그에 출력하거나 .env를 커밋하지 않는다. .env.example에는 빈 항목만 둔다.
+- .env 없이 컴파일된다는 것과 카카오 인증·실제 타일 표시 성공은 별개다. 최종 지도 검증은 실제 키가 입력된 APK 화면으로 확인한다.
+
+아래 Native 전용 기록은 최초 연결 당시 이력이다.
+
 2026-11-14 · 로컬 구현, 앱·키 등록 전
 
 ## 등록 순서

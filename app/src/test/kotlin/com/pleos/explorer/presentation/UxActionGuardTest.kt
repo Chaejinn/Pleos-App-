@@ -20,6 +20,30 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = ExplorerApplication::class)
 class UxActionGuardTest {
+    @Test fun parkedMonitoringBlocksDestructiveActionsButAllowsVoiceSettingAndWithdrawal() {
+        val context = RuntimeEnvironment.getApplication()
+        context.filesDir.resolve("trips.json").writeText("[]")
+        val gate = UxAccessGate()
+        gate.update(gate.begin(),UxAccessState(UxAvailability.AVAILABLE,false,0))
+        val settings = MemorySettings(UserSettings(recordingConsentGranted=true))
+        val drive = DriveStatus().apply { monitoring = true }
+        val model = AppViewModel(settings,drive,LegacyReportRepository(context),gate)
+        val models = ViewModelStore().also { it.put("app",model) }
+        try {
+            model.deleteAll()
+            model.deleteTrip("old")
+            model.deleteRecording("new")
+            model.finishInterrupted("new")
+            model.setTts(true)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(context.filesDir.resolve("trips.json").exists())
+            assertFalse(drive.state.value.deleting)
+            assertTrue(settings.settings.value.ttsEnabled)
+            model.setConsent(false)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(settings.settings.value.recordingConsentGranted)
+        } finally { models.clear() }
+    }
     @Test fun restrictedStateBlocksStaleDeleteAndEnableActionsEvenWhenServiceIsIdle() {
         val context = RuntimeEnvironment.getApplication()
         context.filesDir.resolve("trips.json").writeText("[]")

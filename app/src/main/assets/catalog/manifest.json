@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "dataVersion": "landmarks-897-2026-11-15",
+  "coordinateSystem": "WGS84",
+  "catalogKind": "LANDMARK_POINTS",
+  "count": 897,
+  "synthetic": false,
+  "files": [{
+    "path": "legacy/landmarks.json",
+    "sha256": "e0e071a823e9179bb4a683fc4170431307183590c8f4bfa541fed41988b9a80b"
+  }],
+  "sources": [{
+    "name": "사용자 제공 전국_랜드마크_897개_앱형식.json",
+    "url": null,
+    "retrievedAt": "2026-11-15",
+    "license": "UNVERIFIED",
+    "attribution": "공급된 파일에 원본 배포 URL과 이용조건이 포함되어 있지 않음. 외부 배포 전 원출처 확인 필요.",
+    "modifications": "전달받은 897개 레코드와 필드 값을 보존하여 앱 카탈로그로 연결"
+  }]
+}
