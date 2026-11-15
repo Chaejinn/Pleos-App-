@@ -26,6 +26,7 @@ object DetectionPolicy {
     const val PARKED_FALLBACK_DURATION_MS = 10_000L
     const val HARSH_BRAKE_MPS2 = 3.0
     const val METRICS_SAMPLE_GAP_MS = 5_000L
+    const val METRICS_DISTANCE_M = 1_000.0
     const val HARSH_STEER_MIN_SPEED_MPS = 20.0 / 3.6
     const val HARSH_STEER_DEG_PER_SEC = 180.0
     const val TURN_ANGLE_DEG = 90.0
