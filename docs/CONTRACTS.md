@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 14 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 15 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -17,6 +17,7 @@ F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #21에서 F-15 급조향 판정을 구현했다. 각도·속도 관측 API는 15절을 따른다.
 이슈 #23에서 F-15 회전·방향지시등 사용률을 구현했다. 원본 신호·좌우 기준·미관측 계약은 16절을 따른다.
 이슈 #25에서 F-15 평균 효율·적산거리 계산을 구현했다. 누적 관측·구간·단위 계약은 17절을 따른다.
+이슈 #27에서 F-15 1km 지표·위치 단절·종료 잔여 구간 집계를 구현했다. 실제 API는 18절을 따른다.
 동서해 칭호·나머지 차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
@@ -75,7 +76,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `RegionBadge` | `badgeId: String`, `regionCode: String`, `type: BadgeType`, `firstTripId: String?`, `acquiredAtMs: Long`, `visitCount: Int` |
 | `BadgeType` | `REGION`, `UNIVERSITY` |
 | `AchievementTitle` | `titleId: String`, `conditionText: String`, `acquiredAtMs: Long`, `tripId: String?` |
-| `DrivingMetrics` | `id: String`, `tripId: String`, `segmentIndex: Int`, `startPointId: String?`, `pathSegmentId: String`, `startDistanceM: Double`, `endDistanceM: Double`, `harshBrakes: Int?`, `harshSteers: Int?`, `turnSignalRate: Double?`, `avgEfficiency: Efficiency?`, `turnCount: Int?`, `signaledTurnCount: Int?` |
+| `DrivingMetrics` | `id: String`, `tripId: String`, `segmentIndex: Int`, `startPointId: String?`, `pathSegmentId: String`, `startDistanceM: Double`, `endDistanceM: Double`, `startElapsedMs: Long`, `endElapsedMs: Long`, `harshBrakes: Int?`, `harshSteers: Int?`, `turnSignalRate: Double?`, `avgEfficiency: Efficiency?`, `turnCount: Int?`, `signaledTurnCount: Int?`; 18절 참조 |
 | `Efficiency` | `value: Double`, `unit: EfficiencyUnit` |
 | `GhostResult` | `id: String`, `tripId: String`, `pastTripId: String?`, `matchedDistanceM: Double`, `firstPassedAtMs: Long`, `previousLastPassedAtMs: Long`, `newRoadM: Double`, `metricsDiff: MetricsDiff?`, `currentPath: List<PathSegment>`, `pastPath: List<PathSegment>`, `passages: List<GhostPassage>`, `finalized: Boolean = false`; 10절 참조 |
 | `MetricsDiff` | `harshBrakesDelta: Int?`, `harshSteersDelta: Int?`, `turnSignalRateDelta: Double?`, `efficiencyDelta: Efficiency?` |
@@ -113,7 +114,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `ProcessGhostComparisonUseCase` | `suspend start/process/resume` | 구현됨. F-13 이력 조회·결과·보상 저장 제안 조합. 10절 참조 |
 | `TitleEvaluator` | `evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified>` | 구현됨. 지역 뱃지·고스트 종료·신규 도로 누적의 세 칭호 판정. 11·13절 참조 |
 | `ProcessTitleFactUseCase` | `suspend process(fact: AchievementFact): TitleUpdate` | 구현됨. 확정 개수 조회·최초 칭호·보상 저장 제안 조합. 11절 참조 |
-| `MetricsCollector` | `process(sample: VehicleSample, position: TrackPosition?): List<DrivingMetrics>` | 위치 연결 가능한 구간 지표 반환. 종료 때 미완료 구간 flush |
+| `MetricsCollector` | `collect(samples: List<MetricsSample>, finished: Boolean = false): List<DrivingMetrics>` | 구현됨. 승인 위치에 연결한 판정 결과를 1km·종료 잔여 구간으로 집계. 18절 참조 |
 | `HarshBrakeDetector` | `process(state: HarshBrakeState, speed: Observation<Double?>): HarshBrakeUpdate` | 구현됨. F-15 급제동 진입 판정. 저장·구간 집계는 하지 않음. 14절 참조 |
 | `HarshSteerDetector` | `process(state: HarshSteerState, angle: Observation<Double?>, speed: Observation<Double?>?): HarshSteerUpdate` | 구현됨. F-15 급조향 진입 판정. 15절 참조 |
 | `TurnSignalDetector` | `TurnSignalDetector(positiveAngleDirection: TurnDirection)`, `process(state, input): TurnSignalUpdate` | 구현됨. F-15 회전별 신호 사용·횟수·사용률 판정. 16절 참조 |
@@ -135,7 +136,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `AchievementFact` | 구현됨. `BadgeGranted(badgeId, tripId, atMs)`, `GhostFinished(result, atMs)`, `TripFinished(tripId, atMs, newRoadM)`. 11·13절 참조 |
 | `AchievementProgress` | 구현됨. `regionBadgeCount: Int = 0`, `acquiredTitleIds: Set<String> = emptySet()`, `newRoadDistanceM: Double = 0.0`. 신규 거리는 현재 Trip을 포함한 확정 전체 누적 |
 | `TitleQualified` | `titleId`, `tripId`, `acquiredAtMs`, `conditionText` |
-| `TrackPosition` | `tripId`, `pathSegmentId`, `pointId`, `distanceFromTripStartM` |
+| `TrackPosition` | 구현됨. `tripId`, `pathSegmentId`, `pointId: String?`, `distanceFromTripStartM: Double`, `elapsedMs: Long`. `from(TrackUpdate): TrackPosition?`; 18절 참조 |
 | `ProcessingOutcome` | `Applied`, `Rejected(reason)`, `Failed(error)`; Failed는 저장·데이터 읽기 장애 |
 
 후속 동서해 칭호의 `CoastEntered(coastId, tripId, atMs)`·`coastVisitsByDate`는 아직 구현하지 않았다.
@@ -896,3 +897,48 @@ if (fact != null) titles.process(fact)
 - 적산거리 오류를 GPS 거리로 위장하거나 Trip.distanceM을 덮어쓰지 않는다. GPS 기반 기능은 이 계산과 독립적으로 유지한다.
 - consumption은 누적 사용량이다. 순간 연비/전비·연료 잔량·배터리 SOC를 그대로 넣을 수 없다. 현재 앱의 legacy 순간 효율
   콜백은 이 입력 계약의 구현이 아니며 실제 SDK 누적 사용량 지원·단위·관측 주기를 확인했다고 주장하지 않는다.
+
+## 18. F-15 1km 지표 집계 API
+
+이슈 #27은 기존 F03 승인 위치·F15 판정 결과를 조합한다. 저장·SDK 수집을 수행하지 않는 일괄 순수 계산이다.
+미구현 process(VehicleSample, TrackPosition?) 규격을 실제 collect API로 구체화했다. 기존 호출 코드는 없다.
+
+| 타입·API | 의미 |
+| --- | --- |
+| `TrackPosition.from(update)` | Accepted인 활성 F03 결과의 누적 GPS 거리·원본 단조 시각·pathSegmentId. 거절·중복·중단·종료 결과는 null |
+| `pointId` | 해당 승인 위치가 실제 저장점인 경우만 ID. 20m/5초 저장 사이의 승인 위치와 보간 경계에는 null |
+| `MetricsSample(position, harshBrake?, harshSteer?, turnSignal?, efficiency?)` | 같은 위치·원본 시각에 연결한 기존 판정 결과와 누적 효율 관측. 기본 null은 미관측 |
+| `collect(samples, finished=false)` | Trip 시작의 0m 위치부터 현재까지 빠짐없이 정렬한 전체 입력. 완료 1km 구간과 이미 끊긴 경로의 잔여 구간 반환 |
+| `collect(samples, finished=true)` | 마지막 경로의 양수 잔여 거리도 반환. 정확히 1km 뒤의 정차 관측은 마지막 행에 포함 |
+| `DrivingMetrics` | 같은 pathSegmentId의 위치 범위·단조 시각 범위·지표. segmentIndex는 0부터 반환 순서 |
+
+- 새 API는 위치가 저장되는 20m/5초 간격이 아니라 모든 F03 승인 위치를 받는다. TrackPosition.from은
+  TrackUpdate의 승인 위치와 snapshot.previous가 일치할 때만 값을 만든다. 거절 위치를 통과시키지 않는다.
+- 호출자는 판정기에 전달한 각 입력과 결과를 빠짐없이 같은 순서로 연결해야 한다. 일부 결과만 골라 정상 관측처럼
+  전달하거나 캐시 결과의 원본 시각을 현재 위치 시각으로 바꾸지 않는다. 비동기 차량 입력을 위치에 연결하는
+  실제 어댑터·완전성 검증은 후속 통합 작업이다. 확인되지 않은 입력은 null로 전달한다.
+- 한 연속 경로 안에서 1,000m씩 자르고 초과 거리는 다음 행에 남긴다. 경로가 끊기면 기존 잔여 거리를 닫고
+  새 경로의 시작 위치부터 다시 1km를 센다. 단절 전후를 잇거나 전역 거리의 1km 배수에 억지로 맞추지 않는다.
+  예: 경로 A 0~400m, 경로 B 400~1500m → A 0~400, B 400~1400, 종료 시 B 1400~1500.
+- 새 path의 첫 누적 거리는 이전 path의 마지막과 같아야 한다. 같은 Trip과 경로의 단조 시각·누적 거리는 증가/비감소다.
+  새 path에서는 재시작한 단조 시각을 허용한다. 종료한 path ID 재사용·다른 Trip·역순·동시각 충돌·중간 목록만 전달은
+  IllegalArgumentException이다. 완전히 동일한 연속 재전달은 한 번만 반영한다. 경로 거리/1km의 행 수는 Int 범위여야 한다.
+- 저장점 사이의 1km 경계 시각은 거리 비율로 보간한 범위 메타데이터다. 새 TrackPoint·센서 관측을 만들지 않는다.
+  사건 소속은 누적 거리와 같은 거리에서의 시각 순서로 (시작, 끝]에 배정한다. 경계 사건을 두 행에 중복 계산하거나
+  반올림한 시각 때문에 앞 행으로 이동시키지 않는다. 보간 경계의 startPointId는 null이다.
+  이전 행과 공유하지 않는 각 path의 첫 위치 사건은 원본 판정이 유효할 때 첫 행에 포함한다.
+- 급제동·급조향은 기존 started만 센다. 최초 기준 입력의 미분 값은 요구하지 않으며, 이후 겹치는 입력 간격마다
+  5초 이하 연속성·현재 위치와 일치하는 원본 시각·유효 판정 값이 필요하다. 불충분한 행의 해당 횟수는 null이다.
+- 회전은 기존 TurnSignalTurn과 TurnSignalUsage.record를 재사용한다. 핸들 관측이 불완전한 행은 횟수·사용률 null,
+  회전은 알지만 신호가 미확인인 행은 turnCount만 유지하고 signaledTurnCount·사용률은 null이다. 정상 관측의 회전 0건은
+  횟수 0·사용률 null이다. 이전 행의 누락을 모든 후속 행에 영구 전파하지 않는다.
+- 효율은 실제 시작·끝 위치와 원본 누적 거리/소비량 시각이 모두 일치하고 중간 관측도 빠짐없을 때만 기존 계산기에
+  위임한다. 보간 경계의 소비량을 거리 비율로 분배하지 않는다. 정확한 경계 관측이 없으면 avgEfficiency=null이며
+  비동기 실차 신호에서 이 조건을 충족하는지 아직 검증하지 않았다. 단위·리셋·결측 처리는 17절 그대로다.
+- ID는 JDK UUID.nameUUIDFromBytes에 UTF-8 `pleos.metrics.v1:{tripId}:{segmentIndex}`를 넣어 생성한다.
+  같은 Trip 전체 입력 재계산에서 같은 행 ID를 유지한다. 저장 담당자는 ID 기준 upsert하며 행을 중복 추가하지 않는다.
+  종료 직전 경계 정차 관측으로 마지막 행이 갱신될 수 있으므로 반환 목록을 해당 Trip의 최신 제안으로 취급한다.
+- 완료 여부·200m 미만 Trip 폐기는 F03의 책임이다. DISCARDED라면 호출자가 지표도 저장하지 않는다.
+  빈 입력·한 점·0거리 경로에는 행이 없다. 집계기를 원시 센서 콜백마다 전체 재실행하지 않고 1km 도달·단절·종료 시 호출한다.
+- 새 저장 포트·UseCase·복구 프레임워크·의존성은 없다. 기존 legacy 앱·판정 임계값·효율 계산·적산거리 보조 계산은 보존한다.
+  DrivingMetrics는 신규 domain 타입이며 Room Entity·UI 연결·F13 metricsDiff 범위 비교는 이번 구현에 포함되지 않는다.
