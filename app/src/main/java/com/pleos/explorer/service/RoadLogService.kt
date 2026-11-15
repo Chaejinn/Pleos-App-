@@ -256,16 +256,21 @@ class RoadLogService : Service() {
                     val elapsed = SystemClock.elapsedRealtime()
                     if (speechPolicy.canAnnounce(elapsed,settings.ttsEnabled,settings.recordingConsentGranted,
                         outcome.lifecycle.snapshot.recordingState == com.pleos.explorer.domain.model.RecordingState.RECORDING && drivingForSpeech(elapsed))) try {
-                        val reward = graph.trackRecordingStore.nextRewardForSpeech(requireNotNull(outcome.lifecycle.snapshot.tripId))
-                        if (reward != null && graph.trackRecordingStore.claimRewardSpeech(reward.id)) {
+                        val tripId = requireNotNull(outcome.lifecycle.snapshot.tripId)
+                        val reward = graph.trackRecordingStore.nextRewardForSpeech(tripId)
+                        val landmark = if (reward == null) graph.trackRecordingStore.nextLandmarkForSpeech(tripId) else null
+                        val claimed = if (reward != null) graph.trackRecordingStore.claimRewardSpeech(reward.id)
+                            else landmark?.let { graph.trackRecordingStore.claimLandmarkSpeech(it.key) } ?: false
+                        if (claimed) {
                             val name = (graph.regionCatalog as? com.pleos.explorer.data.catalog.RegionCatalogState.Ready)?.regions
-                                ?.firstOrNull { it.code == reward.subjectId.removePrefix("REGION:") }?.name
+                                ?.firstOrNull { it.code == reward?.subjectId?.removePrefix("REGION:") }?.name
                             val latest = graph.settingsRepository.settings.value
                             val at = SystemClock.elapsedRealtime()
                             if (speechPolicy.canAnnounce(at,latest.ttsEnabled,latest.recordingConsentGranted,
                                 outcome.lifecycle.snapshot.recordingState == com.pleos.explorer.domain.model.RecordingState.RECORDING && drivingForSpeech(at))) {
                                 speechPolicy.attempted(at)
-                                speaker.speak(if (reward.kind == com.pleos.explorer.domain.model.RewardKind.BADGE)
+                                speaker.speak(if (landmark != null) "새로운 명소를 수집했어요. 정차 후 도감을 확인해 주세요."
+                                    else if (reward?.kind == com.pleos.explorer.domain.model.RewardKind.BADGE)
                                     "${name ?: "지역"} 배지를 받았어요." else "새로운 탐험 칭호를 받았어요.")
                             }
                         }

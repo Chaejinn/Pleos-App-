@@ -29,9 +29,9 @@ internal fun RecordingArchiveScreen(records: List<RecordingSnapshot>, sources: M
     onDelete: (String) -> Unit, onFinishInterrupted: (String) -> Unit, allowChanges: Boolean = true) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     var deletingId by rememberSaveable { mutableStateOf<String?>(null) }
-    Text("검증 경로 기록", fontSize = 28.sp)
-    Text("재생·위치 입력으로 검증한 기록입니다. 실제 차량 연동 결과와 구분해 주세요.", fontSize = 24.sp)
-    if (records.isEmpty()) Text("저장된 검증 경로가 없어요", fontSize = 24.sp)
+    Text("경로 기록", fontSize = 28.sp)
+    Text("저장된 주행 경로를 확인할 수 있어요. 시연 기록은 입력 종류로 구분돼요.", fontSize = 24.sp)
+    if (records.isEmpty()) Text("저장된 경로가 없어요", fontSize = 24.sp)
     val selected = records.firstOrNull { it.trip.id == selectedId }
     if (selected == null) records.forEach { record ->
         val status = if (record.status == TripStatus.ACTIVE) (if (allowChanges) "중단 기록" else "기록 중") else "완료"

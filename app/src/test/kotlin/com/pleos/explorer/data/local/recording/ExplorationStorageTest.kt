@@ -81,6 +81,35 @@ class ExplorationStorageTest {
         db.close()
     }
 
+    @Test fun landmarkSpeechIsDurableSourceScopedAndDoesNotAcknowledgeTheReward() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        context.deleteDatabase("landmark-speech.db")
+        val cipher = crypto()
+        var db = Room.databaseBuilder(context, RecordingDatabase::class.java, "landmark-speech.db").build()
+        var store = RoomTrackRecordingStore(db, cipher, catalog)
+        record(store, "demo", RecordingInputSource.REPLAY)
+        assertNull(store.nextLandmarkForSpeech("demo"))
+        assertFalse(store.claimLandmarkSpeech(store.landmarkVisits().first().key))
+        record(store, "gps", RecordingInputSource.ANDROID_GPS, 100_000)
+        assertNull(store.nextLandmarkForSpeech("other-trip"))
+        val visit = requireNotNull(store.nextLandmarkForSpeech("gps"))
+        assertTrue(store.claimLandmarkSpeech(visit.key))
+        assertFalse(store.landmarkVisits().first { it.key == visit.key }.acknowledged)
+        db.close()
+        db = Room.databaseBuilder(context, RecordingDatabase::class.java, "landmark-speech.db").build()
+        store = RoomTrackRecordingStore(db, cipher, catalog)
+        assertFalse(store.claimLandmarkSpeech(visit.key))
+        val other = requireNotNull(store.nextLandmarkForSpeech("gps"))
+        assertNotEquals(visit.key, other.key)
+        store.acknowledgeLandmark(other.key)
+        assertFalse(store.claimLandmarkSpeech(other.key))
+        assertNull(store.nextLandmarkForSpeech("gps"))
+        store.deleteAll()
+        record(store, "new-gps", RecordingInputSource.ANDROID_GPS, 200_000)
+        assertTrue(store.claimLandmarkSpeech(requireNotNull(store.nextLandmarkForSpeech("new-gps")).key))
+        db.close()
+    }
+
     @Test fun secondPassUsesExistingGhostEngineAndFinalizesComparison() = runBlocking {
         val db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), RecordingDatabase::class.java).build()
         val store = RoomTrackRecordingStore(db, crypto(), catalog)

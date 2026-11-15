@@ -254,6 +254,23 @@ class RoomTrackRecordingStore(
             .minByOrNull { it.occurredAtMs }
     }
 
+    suspend fun nextLandmarkForSpeech(tripId: String): LandmarkVisit? = database.withTransaction {
+        val claims = read("speech:claims", Array<String>::class.java).orEmpty().toSet()
+        visits().filter { it.tripId == tripId && it.inputSource == RecordingInputSource.ANDROID_GPS.name &&
+            !it.acknowledged && "landmark:${it.key}" !in claims }.minByOrNull { it.acquiredAtMs }
+    }
+
+    suspend fun claimLandmarkSpeech(key: String): Boolean = database.withTransaction {
+        val visit = visits().firstOrNull { it.key == key }
+        if (visit == null || visit.acknowledged || visit.inputSource != RecordingInputSource.ANDROID_GPS.name)
+            return@withTransaction false
+        val id = "landmark:$key"
+        val claims = read("speech:claims", Array<String>::class.java).orEmpty().toSet()
+        if (id in claims) return@withTransaction false
+        write("speech:claims", claims + id)
+        true
+    }
+
     override suspend fun load(tripId: String): RecordingSnapshot? = database.withTransaction {
         snapshot(tripId)
     }
