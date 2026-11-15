@@ -28,4 +28,7 @@ object DetectionPolicy {
     const val METRICS_SAMPLE_GAP_MS = 5_000L
     const val HARSH_STEER_MIN_SPEED_MPS = 20.0 / 3.6
     const val HARSH_STEER_DEG_PER_SEC = 180.0
+    const val TURN_ANGLE_DEG = 90.0
+    const val TURN_REARM_DEG = 30.0
+    const val TURN_SIGNAL_LOOKBACK_MS = 5_000L
 }
