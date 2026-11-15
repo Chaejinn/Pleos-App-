@@ -3,6 +3,7 @@ package com.pleos.explorer.presentation.collection
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -36,6 +38,11 @@ import com.pleos.explorer.domain.model.LandmarkVisit
 import com.pleos.explorer.domain.model.legacy.Landmark
 import com.pleos.explorer.domain.model.legacy.LandmarkType
 import com.pleos.explorer.presentation.components.ActionButton
+import com.pleos.explorer.presentation.components.SecondaryButton
+import com.pleos.explorer.presentation.components.SectionHeading
+import com.pleos.explorer.presentation.components.RoadIcon
+import com.pleos.explorer.presentation.components.Forest
+import com.pleos.explorer.presentation.components.Mist
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -69,32 +76,45 @@ internal fun LandmarkBrowser(
                 (query.isBlank() || "${landmark.name} ${landmark.region} ${landmark.type.label()}".contains(query.trim(), true))
         }
     }
-    Text(if (collectionOnly) "랜드마크 도감" else "전국 랜드마크", fontSize = 28.sp)
+    SectionHeading(if (collectionOnly) "나만의 탐험 도감" else "전국 랜드마크", "방문한 장소가 하나씩 나의 배지가 됩니다.")
     Text("${if (replay) "시연 수집" else "방문 수집"} ${filteredVisits.keys.count { id -> landmarks.any { it.id == id } }} / ${landmarks.size}",
         fontSize = 24.sp, color = MaterialTheme.colorScheme.primary)
-    if (visits.any { it.isReplay }) ActionButton(if (replay) "실제 방문 기록 보기" else "시연 기록 보기") { replay = !replay }
+    if (visits.any { it.isReplay }) SecondaryButton(if (replay) "실제 방문 기록 보기" else "시연 기록 보기") { replay = !replay }
     if (replay) Text("합성 위치로 획득한 시연 배지입니다. 실제 방문과 분리해 보관합니다.", fontSize = 24.sp)
     OutlinedTextField(value = query, onValueChange = { query = it }, label = { Text("명소·지역·유형 검색", fontSize = 24.sp) },
         modifier = Modifier.fillMaxWidth().heightIn(min = 76.dp), singleLine = true, textStyle = TextStyle(fontSize = 24.sp))
-    ActionButton(if (acquiredOnly) "모든 명소 보기" else "수집한 명소만 보기") { acquiredOnly = !acquiredOnly }
+    SecondaryButton(if (acquiredOnly) "모든 명소 보기" else "수집한 명소만 보기") { acquiredOnly = !acquiredOnly }
     Text("${results.size}곳 · 반경 진입 시 자동 수집", fontSize = 24.sp)
     if (results.isEmpty()) Text("조건에 맞는 명소가 없어요. 검색어나 수집 필터를 바꿔보세요.", fontSize = 24.sp)
     val pages = ((results.size + 11) / 12).coerceAtLeast(1)
     val currentPage = page.coerceIn(0, pages - 1)
-    results.drop(currentPage * 12).take(12).forEach { landmark ->
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+      val columns = if (maxWidth >= 1000.dp) 3 else if (maxWidth >= 640.dp) 2 else 1
+      Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+       results.drop(currentPage * 12).take(12).chunked(columns).forEach { row ->
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+         row.forEach { landmark ->
         val acquired = landmark.id in filteredVisits
-        Card(onClick = { selectedId = landmark.id }, modifier = Modifier.fillMaxWidth().heightIn(min = 92.dp),
-            colors = CardDefaults.cardColors(containerColor = if (acquired) Color(0xFFE0F2EB) else Color(0xFFE9EBEE))) {
+        Card(onClick = { selectedId = landmark.id }, modifier = Modifier.weight(1f).heightIn(min = 160.dp),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = if (acquired) Mist else Color(0xFFE7E8E2))) {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Box(Modifier.size(64.dp).background(if (acquired) Color(0xFF176B53) else Color(0xFF59636F), CircleShape),
-                    contentAlignment = Alignment.Center) { Text(landmark.type.label(), color = Color.White, fontSize = 24.sp) }
+                Box(Modifier.size(64.dp).background(if (acquired) Forest else Color(0xFF616C65), CircleShape),
+                    contentAlignment = Alignment.Center) { RoadIcon(if (acquired) 1 else 0, color = Color.White) }
                 Column(Modifier.weight(1f)) {
-                    Text(landmark.name, fontSize = 24.sp)
-                    Text("${landmark.region} · ${if (acquired) "수집 완료" else "미수집"}", fontSize = 24.sp)
+                    Text(landmark.name, style = MaterialTheme.typography.titleMedium)
+                    Text("${landmark.region} · ${landmark.type.label()}", fontSize = 24.sp)
+                    Text(if (acquired) "수집 완료" else "아직 만나지 않은 곳", fontSize = 24.sp,
+                        color = if (acquired) Forest else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
+         }
+         repeat(columns - row.size) { Box(Modifier.weight(1f)) }
+        }
+       }
+      }
     }
     if (pages > 1) {
         Text("${currentPage + 1} / $pages 페이지", fontSize = 24.sp)
@@ -109,14 +129,15 @@ internal fun LandmarkBrowser(
 }
 
 @Composable
-internal fun LandmarkDetails(landmark: Landmark, visit: LandmarkVisit?, onDismiss: () -> Unit, onShowMap: (() -> Unit)? = null) {
+internal fun LandmarkDetails(landmark: Landmark, visit: LandmarkVisit?, onDismiss: () -> Unit,
+    onShowMap: (() -> Unit)? = null, collected: Boolean = visit != null) {
     AlertDialog(onDismissRequest = onDismiss, title = { Text(landmark.name, fontSize = 24.sp) },
         text = {
             Column(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("${landmark.region} · ${landmark.type.label()}", fontSize = 24.sp)
                 Text("수집 반경 ${landmark.radiusM.toInt()}m", fontSize = 24.sp)
                 Text(landmark.story ?: "주변을 지나며 나만의 방문 기록을 남겨보세요.", fontSize = 24.sp)
-                Text(if (visit == null) "아직 수집하지 않았어요" else {
+                Text(if (visit == null) (if (collected) "수집 완료 · 도감에서 방문 기록을 확인하세요" else "아직 수집하지 않았어요") else {
                     val time = DateTimeFormatter.ofPattern("yyyy.MM.dd HH:mm").withZone(ZoneId.of("Asia/Seoul"))
                         .format(Instant.ofEpochMilli(visit.acquiredAtMs))
                     "${if (visit.isReplay) "시연 획득" else "최초 방문"} $time"

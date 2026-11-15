@@ -3,6 +3,15 @@
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -17,6 +26,11 @@ import androidx.compose.ui.unit.sp
 import com.pleos.explorer.domain.model.RecordingSnapshot
 import com.pleos.explorer.domain.model.TripStatus
 import com.pleos.explorer.presentation.components.ActionButton
+import com.pleos.explorer.presentation.components.SectionHeading
+import com.pleos.explorer.presentation.components.TravelPanel
+import com.pleos.explorer.presentation.components.RoadIcon
+import com.pleos.explorer.presentation.components.JourneyArt
+import com.pleos.explorer.presentation.components.SecondaryButton
 import com.pleos.explorer.data.local.recording.RecordingInputSource
 import java.time.Instant
 import java.time.ZoneId
@@ -31,16 +45,31 @@ internal fun RecordingArchiveScreen(records: List<RecordingSnapshot>, sources: M
     visits: List<com.pleos.explorer.domain.model.LandmarkVisit> = emptyList(), onlineMapEnabled: Boolean = false,
     ghostResults: List<com.pleos.explorer.domain.model.GhostResult> = emptyList()) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    var ghostMapId by rememberSaveable(selectedId) { mutableStateOf<String?>(null) }
     var deletingId by rememberSaveable { mutableStateOf<String?>(null) }
-    Text("탐험 기록", fontSize = 28.sp)
-    Text("GPS 탐험과 합성 경로 시연을 입력 종류로 구분합니다.", fontSize = 24.sp)
-    if (records.isEmpty()) Text("아직 저장된 탐험이 없어요. 지도 탭에서 탐험을 시작해 보세요.", fontSize = 24.sp)
+    SectionHeading("길 위에 남긴 이야기", "지나온 경로와 수집한 명소를 다시 만나보세요.")
+    if (records.isEmpty()) TravelPanel {
+        JourneyArt(Modifier.fillMaxWidth().height(140.dp))
+        Text("첫 번째 탐험을 기다리고 있어요", style = MaterialTheme.typography.titleMedium)
+        Text("지도에서 탐험을 시작해 보세요. 200m 이상 이동한 경로가 여기에 남습니다.")
+    }
     val selected = records.firstOrNull { it.trip.id == selectedId }
     if (selected == null) records.forEach { record ->
         val status = if (record.status == TripStatus.ACTIVE) "중단 기록" else "완료"
         val source = sources[record.trip.id] ?: RecordingInputSource.UNKNOWN
-        ActionButton("${date(record.trip.startedAtMs)} · $status · ${source.label}", enabled,
-            onClick = { selectedId = record.trip.id })
+        Card(onClick = { selectedId = record.trip.id }, enabled = enabled,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp), shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Row(Modifier.padding(24.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                RoadIcon(2)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(date(record.trip.startedAtMs), style = MaterialTheme.typography.titleMedium)
+                    Text(String.format(Locale.KOREA, "%.2f km · 명소 %d곳", record.trip.distanceM / 1000,
+                        visits.count { it.tripId == record.trip.id }))
+                    Text("$status · ${source.label}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
     } else {
         val trip = selected.trip
         Text("입력: ${(sources[trip.id] ?: RecordingInputSource.UNKNOWN).label}", fontSize = 24.sp)
@@ -59,7 +88,7 @@ internal fun RecordingArchiveScreen(records: List<RecordingSnapshot>, sources: M
         } else {
             Text("저장 경로 미리보기 · 지도 배경 없음", fontSize = 24.sp)
             SavedPath(selected)
-            if (onlineMapEnabled) com.pleos.explorer.presentation.map.RouteMap(emptyList(), trip.simplifiedPath,
+            if (onlineMapEnabled && ghostMapId == null) com.pleos.explorer.presentation.map.RouteMap(emptyList(), trip.simplifiedPath,
                 trip.simplifiedPath.firstOrNull()?.points?.firstOrNull(), landmarks = landmarks.filter { landmark ->
                     acquired.any { it.landmarkId == landmark.id }
                 }, collectedIds = acquired.map { it.landmarkId }.toSet())
@@ -70,8 +99,13 @@ internal fun RecordingArchiveScreen(records: List<RecordingSnapshot>, sources: M
                     result.newRoadM), fontSize = 24.sp)
                 Text("처음 지난 날 ${date(result.firstPassedAtMs)}", fontSize = 24.sp)
                 Text("차량 주행 특성 비교: 측정 데이터 없음", fontSize = 24.sp)
-                if (onlineMapEnabled) com.pleos.explorer.presentation.map.RouteMap(result.pastPath,
-                    result.currentPath, result.currentPath.firstOrNull()?.points?.firstOrNull())
+                if (onlineMapEnabled) {
+                    SecondaryButton(if (ghostMapId == result.id) "비교 지도 닫기" else "과거 경로 겹쳐 보기") {
+                        ghostMapId = if (ghostMapId == result.id) null else result.id
+                    }
+                    if (ghostMapId == result.id) com.pleos.explorer.presentation.map.RouteMap(result.pastPath,
+                        result.currentPath, result.currentPath.firstOrNull()?.points?.firstOrNull())
+                }
             }
             ActionButton("이 경로 기록 삭제", enabled, onClick = { deletingId = trip.id })
         }

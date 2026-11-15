@@ -20,7 +20,8 @@ window.roadlogUpdate=function(data){pending=data;if(!map)return;
   [['past','#a5b4cc'],['today','#6750a4']].forEach(([key,color])=>data[key].forEach(points=>{
     if(points.length>1)lines.push(new kakao.maps.Polyline({map,path:points.map(point),strokeWeight:5,strokeColor:color,strokeOpacity:.9}));
   }));
-  map.setDraggable(!data.follow);map.setZoomable(true);
+  map.setDraggable(!data.follow);map.setZoomable(!data.follow);
+  document.getElementById('zoom').style.display=data.follow?'none':'block';
   const signature=JSON.stringify([data.follow,data.landmarks]);
   if(signature!==markerSignature){
     markerSignature=signature;cluster.clear();if(info)info.close();

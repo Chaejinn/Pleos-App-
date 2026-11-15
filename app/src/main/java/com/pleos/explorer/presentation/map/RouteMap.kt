@@ -211,7 +211,8 @@ private fun KakaoRouteMap(past: List<PathSegment>, today: List<PathSegment>, foc
     }
     AndroidView(factory = { view }, modifier = modifier.fillMaxWidth().height(mapHeight))
     if (!follow) landmarks.firstOrNull { it.id == selectedId }?.let { landmark ->
-        com.pleos.explorer.presentation.collection.LandmarkDetails(landmark, null, onDismiss = { selectedId = null })
+        com.pleos.explorer.presentation.collection.LandmarkDetails(landmark, null,
+            onDismiss = { selectedId = null }, collected = landmark.id in collectedIds)
     }
     if (map == null && !failed) Text("카카오지도를 불러오고 있어요", fontSize = 24.sp)
     if (failed) {

@@ -5,6 +5,7 @@
 - [기획서 PDF](delivery/RoadLog_기획서.pdf) · [편집 원본](delivery/PROJECT_PLAN.md)
 - [기능명세서 PDF](delivery/RoadLog_기능명세서.pdf) · [편집 원본](delivery/FUNCTIONAL_SPEC.md)
 - [통합 검증 및 남은 항목](delivery/VALIDATION.md)
+- [문서 양식 확인·화면 개편·시연 순서](delivery/HANDOFF.md)
 
 아래는 최초 개발 계약의 이력이다. 현재 랜드마크 통합 범위는 위 문서를 함께 확인한다.
 

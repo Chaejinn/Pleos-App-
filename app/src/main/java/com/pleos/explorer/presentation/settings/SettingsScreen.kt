@@ -21,7 +21,7 @@ internal fun SettingsScreen(ttsEnabled: Boolean, canDelete: Boolean, onTtsChange
         Switch(checked = ttsEnabled, onCheckedChange = onTtsChange,
             modifier = Modifier.heightIn(min = 76.dp))
     }
-    Text("음성 알림은 주행 중 허용되는 상황에서만 제공됩니다.", fontSize = 24.sp)
+    Text("차량 주행 모드에서 허용되는 상황에 음성 알림을 제공합니다. GPS 탐험의 보상은 종료 후 화면에서 확인할 수 있어요.", fontSize = 24.sp)
     ActionButton("기록 전체 삭제", enabled = canDelete,
         onClick = { onDelete() })
     ActionButton("기록 저장 동의 철회", onClick = { onWithdraw() })

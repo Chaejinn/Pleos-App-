@@ -2,6 +2,11 @@ package com.pleos.explorer.presentation
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -11,6 +16,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -22,6 +30,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -30,6 +39,8 @@ import com.pleos.explorer.presentation.archive.ArchiveScreen
 import com.pleos.explorer.presentation.archive.RecordingArchiveScreen
 import com.pleos.explorer.presentation.collection.CollectionScreen
 import com.pleos.explorer.presentation.components.ActionButton
+import com.pleos.explorer.presentation.components.RoadLogTheme
+import com.pleos.explorer.presentation.components.RoadIcon
 import com.pleos.explorer.presentation.map.MapScreen
 import com.pleos.explorer.presentation.map.RecordingScreen
 import com.pleos.explorer.presentation.settings.ConsentScreen
@@ -48,6 +59,8 @@ fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () 
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var confirmDeletion by rememberSaveable { mutableStateOf(false) }
     var selectedLandmarkId by rememberSaveable { mutableStateOf<String?>(null) }
+    val screenScroll = rememberScrollState()
+    LaunchedEffect(tab, showSettings, selectedLandmarkId) { screenScroll.scrollTo(0) }
     val restricted = drive.running || !ux.canShowDetails
     LaunchedEffect(restricted) {
         if (restricted) { confirmDeletion = false; showSettings = false; tab = 0 }
@@ -61,7 +74,7 @@ fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () 
         }
     }
 
-    MaterialTheme {
+    RoadLogTheme {
         val reward = report.landmarkVisits.firstOrNull { !it.acknowledged }
         val rewardLandmark = report.landmarks.firstOrNull { it.id == reward?.landmarkId }
         val titleReward = report.titles.firstOrNull { !it.acknowledged }
@@ -97,19 +110,41 @@ fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () 
             text = { Text(error.orEmpty(), fontSize = 24.sp) },
             confirmButton = { TextButton(onClick = model::clearError) { Text("확인", fontSize = 24.sp) } },
         )
-        Scaffold(bottomBar = {
-            if (settings.recordingConsentGranted && !restricted) NavigationBar {
-                listOf("탐험 지도", "배지 도감", "주행 기록").forEachIndexed { index, label ->
-                    NavigationBarItem(selected = tab == index, onClick = { tab = index; showSettings = false },
-                        icon = { Text((index + 1).toString(), fontSize = 24.sp) },
-                        label = { Text(label, fontSize = 24.sp) }, modifier = Modifier.heightIn(min = 76.dp))
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = maxWidth >= 840.dp
+        val navigationVisible = settings.recordingConsentGranted && !restricted
+        val labels = listOf("지도", "도감", "기록")
+        Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = {
+            Surface(color = MaterialTheme.colorScheme.background) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp).heightIn(min = 76.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    RoadIcon(0)
+                    Text("로드로그", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                    if (navigationVisible) TextButton(onClick = { showSettings = !showSettings },
+                        modifier = Modifier.heightIn(min = 76.dp)) { Text(if (showSettings) "닫기" else "설정") }
+                }
+            }
+        }, bottomBar = {
+            if (navigationVisible && !wide) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                labels.forEachIndexed { index, label ->
+                    NavigationBarItem(selected = tab == index && !showSettings,
+                        onClick = { tab = index; showSettings = false }, icon = { RoadIcon(index) },
+                        label = { Text(label) }, modifier = Modifier.heightIn(min = 76.dp))
                 }
             }
         }) { padding ->
-            var content = Modifier.fillMaxSize().padding(padding).padding(24.dp)
-            if (!restricted) content = content.verticalScroll(rememberScrollState())
-            Column(content, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("로드로그", fontSize = 32.sp)
+          Row(Modifier.fillMaxSize().padding(padding)) {
+            if (wide && navigationVisible) NavigationRail(Modifier.fillMaxHeight().width(112.dp),
+                containerColor = MaterialTheme.colorScheme.surface) {
+                labels.forEachIndexed { index, label ->
+                    NavigationRailItem(selected = tab == index && !showSettings,
+                        onClick = { tab = index; showSettings = false }, icon = { RoadIcon(index) },
+                        label = { Text(label) }, modifier = Modifier.padding(vertical = 12.dp).heightIn(min = 76.dp))
+                }
+            }
+            var content = Modifier.weight(1f).fillMaxHeight()
+            if (!restricted) content = content.verticalScroll(screenScroll)
+            Column(content.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 if (drive.running) {
                     RecordingScreen(drive.mode, onStop, allowDebugStop = ux.canShowDetails, message = drive.message,
                         drive = drive, onlineMapEnabled = onlineMapEnabled)
@@ -138,12 +173,14 @@ fun ExplorerApp(model: AppViewModel, onStartDrive: (String) -> Unit, onStop: () 
                             RecordingArchiveScreen(report.recordings, report.inputSources, !drive.finishing && !drive.deleting,
                                 model::deleteRecording, model::finishInterrupted, report.landmarks, report.landmarkVisits,
                                 onlineMapEnabled, report.ghostResults)
-                            ArchiveScreen(report.trips, !drive.finishing && !drive.deleting, model::deleteTrip)
+                            if (report.trips.isNotEmpty()) ArchiveScreen(report.trips,
+                                !drive.finishing && !drive.deleting, model::deleteTrip)
                         }
                     }
-                    ActionButton("설정", onClick = { showSettings = true })
                 }
             }
+          }
+        }
         }
     }
 }
