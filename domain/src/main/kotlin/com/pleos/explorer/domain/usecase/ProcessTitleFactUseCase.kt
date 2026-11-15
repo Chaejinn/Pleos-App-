@@ -18,14 +18,16 @@ class ProcessTitleFactUseCase(
         val state = store.load()
         require(state.revision >= 0)
         val qualified = evaluator.evaluate(fact, state.progress)
-        if (qualified.isEmpty()) return TitleUpdate(state)
+        val nextProgress = if (fact is AchievementFact.CoastEntered) state.progress.recordCoastVisit(fact.visit)
+            else state.progress
+        if (qualified.isEmpty() && nextProgress == state.progress) return TitleUpdate(state)
         val titles = qualified.map { AchievementTitle(it.titleId, it.conditionText, it.acquiredAtMs, it.tripId) }
         val rewards = titles.map { title ->
             val id = ids.newId()
             check(id.isNotBlank())
             PendingReward(id, "TITLE:${title.titleId}", title.tripId, RewardKind.TITLE, title.titleId, title.acquiredAtMs)
         }
-        val progress = state.progress.copy(acquiredTitleIds = state.progress.acquiredTitleIds + titles.map { it.titleId })
+        val progress = nextProgress.copy(acquiredTitleIds = nextProgress.acquiredTitleIds + titles.map { it.titleId })
         val update = TitleUpdate(state.copy(revision = Math.addExact(state.revision, 1), progress = progress), titles, rewards)
         store.commit(state.revision, update)
         return update

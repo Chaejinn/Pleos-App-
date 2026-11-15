@@ -8,6 +8,7 @@ data class AchievementTitle(
 )
 
 sealed interface AchievementFact {
+    data class CoastEntered(val visit: CoastVisit) : AchievementFact
     data class BadgeGranted(val badgeId: String, val tripId: String?, val atMs: Long) : AchievementFact
     data class GhostFinished(val result: GhostResult, val atMs: Long) : AchievementFact
     data class TripFinished(val tripId: String, val atMs: Long, val newRoadM: Double) : AchievementFact {
@@ -36,7 +37,16 @@ data class AchievementProgress(
     val regionBadgeCount: Int = 0,
     val acquiredTitleIds: Set<String> = emptySet(),
     val newRoadDistanceM: Double = 0.0,
-)
+    val coastVisitsByDate: Map<String, Map<Coast, CoastVisit>> = emptyMap(),
+) {
+    fun recordCoastVisit(visit: CoastVisit): AchievementProgress {
+        if ("COAST_TO_COAST" in acquiredTitleIds) return this
+        val visits = coastVisitsByDate[visit.date].orEmpty()
+        val previous = visits[visit.coast]
+        if (previous != null && previous.atMs <= visit.atMs) return this
+        return copy(coastVisitsByDate = coastVisitsByDate + (visit.date to (visits + (visit.coast to visit))))
+    }
+}
 
 data class TitleQualified(
     val titleId: String,

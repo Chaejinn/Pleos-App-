@@ -2,6 +2,7 @@ package com.pleos.explorer.domain.engine
 
 import com.pleos.explorer.domain.model.AchievementFact
 import com.pleos.explorer.domain.model.AchievementProgress
+import com.pleos.explorer.domain.model.Coast
 import com.pleos.explorer.domain.model.DetectionPolicy
 import com.pleos.explorer.domain.model.GhostResult
 import com.pleos.explorer.domain.model.TitleQualified
@@ -11,7 +12,20 @@ class TitleEvaluator {
     fun evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified> {
         require(progress.regionBadgeCount >= 0 && progress.acquiredTitleIds.none { it.isBlank() })
         require(progress.newRoadDistanceM.isFinite() && progress.newRoadDistanceM >= 0)
+        require(progress.coastVisitsByDate.all { (date, visits) ->
+            visits.isNotEmpty() && visits.all { (coast, visit) -> visit.coast == coast && visit.date == date }
+        })
         val proposed = when (fact) {
+            is AchievementFact.CoastEntered -> {
+                val visits = progress.recordCoastVisit(fact.visit).coastVisitsByDate[fact.visit.date].orEmpty()
+                val east = visits[Coast.EAST]
+                val west = visits[Coast.WEST]
+                if (east != null && west != null) {
+                    val completed = if (east.atMs >= west.atMs) east else west
+                    TitleQualified("COAST_TO_COAST", completed.tripId, completed.atMs,
+                        "같은 서울 날짜에 동해안·서해안 지정 지점 반경 2km 방문")
+                } else null
+            }
             is AchievementFact.BadgeGranted -> {
                 val parts = fact.badgeId.split(':', limit = 2)
                 require(parts.size == 2 && parts[0] in setOf("REGION", "UNIVERSITY") && parts[1].isNotBlank())
