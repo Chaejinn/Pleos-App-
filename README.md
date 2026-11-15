@@ -4,10 +4,6 @@
 
 2026 현대자동차그룹 Pleos App Market 앱 개발 공모전을 위한 차량 기반 탐험·수집 서비스 프로토타입입니다. 서울의 도로를 따라 이동하며 명소를 발견하고, 나만의 뱃지 컬렉션을 완성합니다.
 
-> **시연 브랜치: [`jhmin`](https://github.com/Chaejinn/Pleos-App-/tree/jhmin)**
->
-> 이 화면 개편과 서울 시연은 `jhmin`에서 작업했습니다. `main`과 `merge_jhmin`에는 병합하지 않았습니다.
-
 ![로드로그 서울 탐험 화면](docs/demo/explore.png)
 
 ## 시연 보기
