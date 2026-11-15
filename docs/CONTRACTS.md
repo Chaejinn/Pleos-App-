@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 10 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 11 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -13,7 +13,8 @@ F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #13에서 F-07 접수용 두 칭호 판정·저장·보상 제안 포트를 구현했다. 실제 API는 11절을 따른다.
 이슈 #15에서 F-02 주행 상태기계·신호 신선도·접근 제안과 F-03 경로 중단 API를 구현했다. 실제 API는 12절을 따른다.
 이슈 #17에서 F-07 신규 도로 누적 100km 칭호를 추가했다. 확정 누적과 완료 사실 계약은 13절을 따른다.
-동서해 칭호·차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
+이슈 #19에서 F-15 급제동 판정을 구현했다. 속도 관측·연속 상태 API는 14절을 따른다.
+동서해 칭호·나머지 차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
 ## 1. 공통 표현
@@ -110,6 +111,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `TitleEvaluator` | `evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified>` | 구현됨. 지역 뱃지·고스트 종료·신규 도로 누적의 세 칭호 판정. 11·13절 참조 |
 | `ProcessTitleFactUseCase` | `suspend process(fact: AchievementFact): TitleUpdate` | 구현됨. 확정 개수 조회·최초 칭호·보상 저장 제안 조합. 11절 참조 |
 | `MetricsCollector` | `process(sample: VehicleSample, position: TrackPosition?): List<DrivingMetrics>` | 위치 연결 가능한 구간 지표 반환. 종료 때 미완료 구간 flush |
+| `HarshBrakeDetector` | `process(state: HarshBrakeState, speed: Observation<Double?>): HarshBrakeUpdate` | 구현됨. F-15 급제동 진입 판정. 저장·구간 집계는 하지 않음. 14절 참조 |
 | `ProcessDriveInputUseCase` | `suspend process(input: DriveInput): ProcessingOutcome` | 순서 조정, 포트 조회, 변경 묶음 저장, 상태 확정 |
 
 아래 타입을 같은 계약 PR에서 정의한다. 각 엔진 담당자가 별도 버전을 만들지 않는다.
@@ -784,3 +786,25 @@ if (fact != null) titles.process(fact)
 - newRoadDistanceM은 기존 두 생성자 인자 뒤에 기본값 0.0으로 추가한다. 기존 두 칭호 호출과 위치 인자 호환성을 유지한다.
   0은 빈 기록의 기본값이지 기존 사용자 탐험 거리를 모른다는 뜻이 아니다. 저장 구현은 기존 영구 탐험 행을 합산해야 한다.
   현재 실제 Room 구현체가 없어 migration 파일은 추가하지 않았다.
+
+## 14. F-15 급제동 관측 API
+
+이슈 #19의 범위는 급제동 진입 판정이다. MetricsCollector·DrivingMetrics·1km 집계·F-13 metricsDiff 연결은 아직 구현하지 않았다.
+
+| 타입·API | 의미 |
+| --- | --- |
+| `HarshBrakeState(previous = null, active = false)` | 한 Trip·프로세스 세션의 직전 속도 관측과 급제동 진행 여부 |
+| `Observation<Double?>` | 기존 공통 타입 재사용. value는 m/s, observedAtElapsedMs는 속도 원본의 단조 관측 시각 |
+| `HarshBrakeUpdate(state, decelerationMps2 = null, started = false)` | 다음 상태, 유효 인접 관측의 부호 있는 감속도, 급제동 신규 진입 여부 |
+
+- 어댑터는 다른 차량 신호 수신 때 캐시 속도에 새 시각을 붙이지 않는다. 결측·미지원 속도는 null 관측으로 전달한다.
+- 0ms < 관측 간격 ≤5,000ms일 때 `(직전 속도−현재 속도)/초`로 계산한다. 3.0m/s² 이상이면 급제동이며,
+  active가 false에서 true로 바뀔 때만 started=true다. 유효 감속도가 기준 미만이면 재진입을 허용한다.
+- 첫 관측·결측·음수/비유한 속도·5초 초과 공백·비유한 계산 결과는 decelerationMps2=null, started=false다.
+  null은 미관측이며 0건을 뜻하지 않는다. 결측과 공백은 active를 해제한다. 정상 복귀 후 두 유효 관측부터 계산한다.
+- 직전과 같은 시각·같은 값은 중복으로 보고 상태와 active를 유지하며 새 사건을 만들지 않는다.
+  이전 시각 또는 같은 시각의 다른 값은 연결을 끊는다. 최신 시각은 유지하고 직전 속도를 null로 비워,
+  늦게 도착한 값으로 기준 시각을 되돌리거나 미관측 구간을 미분하지 않는다.
+- 음수 관측 시각과 모순된 호출자 상태는 IllegalArgumentException으로 거절한다. 엔진은 전달받은 상태를 변경하지 않는다.
+  호출자는 반환 상태를 다음 입력에 전달하고, Trip 시작·프로세스 재시작 때 HarshBrakeState()로 초기화한다.
+- Brake 페달 신호는 필수 조건이 아니다. SDK 지원 확인·매핑·저장·실차 검증은 이 API 구현에 포함되지 않는다.
