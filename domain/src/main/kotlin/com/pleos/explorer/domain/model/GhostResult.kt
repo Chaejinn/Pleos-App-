@@ -68,7 +68,13 @@ data class GhostResult(
     val finalized: Boolean = false,
 )
 
-data class GhostComparisonInput(val recording: TrackUpdate, val ghost: GhostUpdate)
+data class GhostMetricsInput(val current: List<MetricsSample>, val past: List<MetricsSample>)
+
+data class GhostComparisonInput(
+    val recording: TrackUpdate,
+    val ghost: GhostUpdate,
+    val metrics: GhostMetricsInput? = null,
+)
 
 data class GhostComparisonAnchor(
     val id: String,
