@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 13 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 14 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -16,6 +16,7 @@ F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #19에서 F-15 급제동 판정을 구현했다. 속도 관측·연속 상태 API는 14절을 따른다.
 이슈 #21에서 F-15 급조향 판정을 구현했다. 각도·속도 관측 API는 15절을 따른다.
 이슈 #23에서 F-15 회전·방향지시등 사용률을 구현했다. 원본 신호·좌우 기준·미관측 계약은 16절을 따른다.
+이슈 #25에서 F-15 평균 효율·적산거리 계산을 구현했다. 누적 관측·구간·단위 계약은 17절을 따른다.
 동서해 칭호·나머지 차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
@@ -116,6 +117,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `HarshBrakeDetector` | `process(state: HarshBrakeState, speed: Observation<Double?>): HarshBrakeUpdate` | 구현됨. F-15 급제동 진입 판정. 저장·구간 집계는 하지 않음. 14절 참조 |
 | `HarshSteerDetector` | `process(state: HarshSteerState, angle: Observation<Double?>, speed: Observation<Double?>?): HarshSteerUpdate` | 구현됨. F-15 급조향 진입 판정. 15절 참조 |
 | `TurnSignalDetector` | `TurnSignalDetector(positiveAngleDirection: TurnDirection)`, `process(state, input): TurnSignalUpdate` | 구현됨. F-15 회전별 신호 사용·횟수·사용률 판정. 16절 참조 |
+| `VehicleMetricsCalculator` | `averageEfficiency(samples: List<EfficiencySample>): Efficiency?`, `odometerDistanceM(readings: List<Observation<Double?>>): Double?` | 구현됨. F-15 같은 구간의 누적 관측 계산. 17절 참조 |
 | `ProcessDriveInputUseCase` | `suspend process(input: DriveInput): ProcessingOutcome` | 순서 조정, 포트 조회, 변경 묶음 저장, 상태 확정 |
 
 아래 타입을 같은 계약 PR에서 정의한다. 각 엔진 담당자가 별도 버전을 만들지 않는다.
@@ -868,3 +870,29 @@ if (fact != null) titles.process(fact)
 - 반환 상태를 다음 입력에 전달한다. 나중에 신호가 도착해도 이미 감지한 회전을 재분류하지 않는다. Trip·프로세스 세션 시작 때
   TurnSignalState()로 초기화한다. 엔진은 내부 가변 상태가 없으며 계수 오버플로·모순된 호출자 상태·음수 시각은 명시적으로 실패한다.
   최신 시각의 LEFT/RIGHT 이력은 실제 최신 신호와 양방향으로 일치해야 한다. OFF·HAZARD를 같은 시각의 방향 사용 근거로 만들 수 없다.
+
+## 17. F-15 평균 효율·적산거리 API
+
+이슈 #25의 계산기는 전달받은 한 구간의 입력 목록만 계산하며 이력·복구 상태를 보관하지 않는다.
+새 저장 포트·UseCase·의존성은 추가하지 않는다. 실제 SDK·1km 구간 분할·저장·F-13 연결은 후속이다.
+
+| 타입·API | 의미 |
+| --- | --- |
+| `EfficiencySample(distanceM, consumption, unit)` | distanceM·consumption은 기존 Observation<Double?>. 각각 GPS 누적 거리(m)·누적 소비량(L 또는 kWh)의 원본 단조 관측 |
+| `unit: EfficiencyUnit` | 기존 KM_PER_L 또는 KM_PER_KWH. 기본값 없이 호출자가 확인한 단위를 전달 |
+| `averageEfficiency(samples)` | 같은 구간 거리 합계 km / 소비량 합계. 기존 Efficiency로 반환하며 순간 효율·구간별 비율을 단순 평균하지 않음 |
+| `odometerDistanceM(readings)` | 누적 적산거리(km)의 유효 차이를 m로 반환. GPS 기록과 별도의 보조 값 |
+
+- 각 EfficiencySample의 거리·소비량 원본 시각이 정확히 같아야 한다. 비동기 신호를 묶기 위해 캐시 시각을 새 시각으로
+  덮거나 임의 보간하지 않는다. 같은 구간이 확인되지 않으면 null이다. 확인된 정렬·시간 정합은 후속 어댑터/집계 책임이다.
+- 입력 전체를 검사한다. 유한한 비음수 누적값, 단조 시각, 서로 다른 유효 관측 사이 5초 이하 공백을 요구한다.
+  중간 리셋·결측·잘못된 값·역순·5초 초과 공백이 있으면 전체 결과가 null이다. 정상 값만 골라 누락 구간을 연결하지 않는다.
+- 동일 시각·동일 값 재전달은 증가량을 추가하지 않는다. 동일 시각 값 충돌은 null이며, 실제 시각 진전이 없는
+  빈 목록·한 건·중복만 있는 목록으로 0거리나 효율을 확정하지 않는다. 음수 관측 시각은 IllegalArgumentException이다.
+- 연료·전력 단위가 섞이면 null이다. 소비량 전체 차이가 0 이하이면 효율은 null이다. 소비량이 늘지 않은 중간 표본의
+  거리도 구간 총거리에 포함한다. 유효 소비량이 양수인 정차 구간의 효율 0은 허용한다. 비유한 결과·표현 불가 양수 효율은 null이다.
+- 누적값이 단조인지 모두 확인한 뒤 끝−시작을 사용하므로 인접 증가량 합계와 같다. 효율을 구간별로 평균하지 않는다.
+  적산거리 0 증가는 서로 다른 시각의 유효한 정차 관측이면 0m다. 단위 변환 오버플로는 null이다.
+- 적산거리 오류를 GPS 거리로 위장하거나 Trip.distanceM을 덮어쓰지 않는다. GPS 기반 기능은 이 계산과 독립적으로 유지한다.
+- consumption은 누적 사용량이다. 순간 연비/전비·연료 잔량·배터리 SOC를 그대로 넣을 수 없다. 현재 앱의 legacy 순간 효율
+  콜백은 이 입력 계약의 구현이 아니며 실제 SDK 누적 사용량 지원·단위·관측 주기를 확인했다고 주장하지 않는다.
