@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 16 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 17 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -19,7 +19,8 @@ F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #25에서 F-15 평균 효율·적산거리 계산을 구현했다. 누적 관측·구간·단위 계약은 17절을 따른다.
 이슈 #27에서 F-15 1km 지표·위치 단절·종료 잔여 구간 집계를 구현했다. 실제 API는 18절을 따른다.
 이슈 #29에서 F-13 동일 고스트 범위의 주행 지표 차이를 연결했다. 원본 식별·nullable 비교 계약은 19절을 따른다.
-동서해 칭호·실제 SDK 지표 연결·범용 통합 저장은 후속 구현 규격이다.
+이슈 #31에서 F-07 동서해 방문 칭호·날짜별 진행 저장을 구현했다. 실제 API는 20절을 따른다.
+실제 해안 지점 데이터·SDK 지표 연결·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
 ## 1. 공통 표현
@@ -113,7 +114,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `GhostResultBuilder` | `build(segment, history): GhostResult` | 구현됨. F-12 대응 구간의 날짜·표시 경로 계산 |
 | `GhostResultAssembler` | `process(state, input, history): GhostComparisonUpdate` | 구현됨. F-03 누적 신규 거리와 F-12 실제 경계 조합 |
 | `ProcessGhostComparisonUseCase` | `suspend start/process/resume` | 구현됨. F-13 이력 조회·결과·보상 저장 제안 조합. 10절 참조 |
-| `TitleEvaluator` | `evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified>` | 구현됨. 지역 뱃지·고스트 종료·신규 도로 누적의 세 칭호 판정. 11·13절 참조 |
+| `TitleEvaluator` | `evaluate(fact: AchievementFact, progress: AchievementProgress): List<TitleQualified>` | 구현됨. 지역 뱃지·고스트 종료·신규 도로 누적·같은 날짜 동서해 방문의 네 칭호 판정. 11·13·20절 참조 |
 | `ProcessTitleFactUseCase` | `suspend process(fact: AchievementFact): TitleUpdate` | 구현됨. 확정 개수 조회·최초 칭호·보상 저장 제안 조합. 11절 참조 |
 | `MetricsCollector` | `collect(samples: List<MetricsSample>, finished: Boolean = false): List<DrivingMetrics>` | 구현됨. 승인 위치에 연결한 판정 결과를 1km·종료 잔여 구간으로 집계. 18절 참조 |
 | `HarshBrakeDetector` | `process(state: HarshBrakeState, speed: Observation<Double?>): HarshBrakeUpdate` | 구현됨. F-15 급제동 진입 판정. 저장·구간 집계는 하지 않음. 14절 참조 |
@@ -134,15 +135,13 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `VisitQualified` | `regionCode: String`, `tripId: String?`, `entrySequence: Long`, `qualifiedAtMs: Long`; Trip 없는 정차 방문도 표현 |
 | `HistoricalTrack` | `tripId: String`, `points: List<TrackPoint>`; F-03이 확정한 sequence·segment 경계를 유지한 과거 후보 |
 | `GhostEvent` | `Started(id, pastTripId, atMs)`, `Updated(id, matchedDistanceM)`, `Finished(segment: GhostSegment)`; F-13 GhostResult는 후속 조합 |
-| `AchievementFact` | 구현됨. `BadgeGranted(badgeId, tripId, atMs)`, `GhostFinished(result, atMs)`, `TripFinished(tripId, atMs, newRoadM)`. 11·13절 참조 |
-| `AchievementProgress` | 구현됨. `regionBadgeCount: Int = 0`, `acquiredTitleIds: Set<String> = emptySet()`, `newRoadDistanceM: Double = 0.0`. 신규 거리는 현재 Trip을 포함한 확정 전체 누적 |
+| `AchievementFact` | 구현됨. `BadgeGranted(badgeId, tripId, atMs)`, `GhostFinished(result, atMs)`, `TripFinished(tripId, atMs, newRoadM)`, `CoastEntered(visit: CoastVisit)`. 11·13·20절 참조 |
+| `AchievementProgress` | 구현됨. `regionBadgeCount: Int = 0`, `acquiredTitleIds: Set<String> = emptySet()`, `newRoadDistanceM: Double = 0.0`, `coastVisitsByDate: Map<String, Map<Coast, CoastVisit>> = emptyMap()`. 신규 거리는 현재 Trip 포함 확정 전체 누적, 해안 진행은 20절 참조 |
 | `TitleQualified` | `titleId`, `tripId`, `acquiredAtMs`, `conditionText` |
 | `TrackPosition` | 구현됨. `tripId`, `pathSegmentId`, `pointId: String?`, `distanceFromTripStartM: Double`, `elapsedMs: Long`, `timeMs: Long? = null`, `point: GeoPoint? = null`, `isPathStart: Boolean? = null`. `from(TrackUpdate): TrackPosition?`; 18·19절 참조 |
 | `ProcessingOutcome` | `Applied`, `Rejected(reason)`, `Failed(error)`; Failed는 저장·데이터 읽기 장애 |
 
-후속 동서해 칭호의 `CoastEntered(coastId, tripId, atMs)`·`coastVisitsByDate`는 아직 구현하지 않았다.
-추후 서울 날짜별 해안 지점을 추가하되 같은 사실의 재처리로 중복 반영하지 않는다.
-현행 세 칭호 API에 미구현 사실 타입을 빈 구현으로 추가하지 않는다.
+동서해 방문 사실·날짜별 진행은 20절의 실제 API를 따른다. 실제 지정 지점 파일과 앱 로더는 아직 없다.
 
 `VisitQualified`·`TitleQualified`는 획득 확정 사실이 아니라 저장 제안이다. DB 유니크 키로 신규 획득이 확인된 후에만 Reward·AchievementFact를 확정한다.
 
@@ -597,8 +596,8 @@ commit 뒤 응답이 유실되어도 저장된 cursor로 결과·보상 중복�
 
 ## 11. F-07 접수용 칭호 API와 앱 연결 계약
 
-이슈 #13의 구현은 REGION_EXPLORER·ROAD_REVISITOR 두 칭호다. UI·TTS·실제 Room과
-COAST_TO_COAST는 후속 작업이다. 이슈 #17의 NEW_ROAD_DISCOVERER 추가는 13절을 따른다.
+이슈 #13의 구현은 REGION_EXPLORER·ROAD_REVISITOR 두 칭호다. UI·TTS·실제 Room은 후속 작업이다.
+이슈 #17의 NEW_ROAD_DISCOVERER 추가는 13절, 이슈 #31의 COAST_TO_COAST 추가는 20절을 따른다.
 F-03·05·12·13 판정과 기존 앱은 변경하지 않았다.
 
 ### 사실 입력과 순수 판정
@@ -646,7 +645,7 @@ PendingReward·다음 snapshot을 한 트랜잭션으로 반영한다. 처음에
 새 REGION 획득과 F-03 탐험 거리 확정도 이 snapshot의 revision 범위에 포함하여 오래된 값으로 계산한 저장을 거절해야 한다.
 실제 Room 구현체·migration은 없으며, 앱 저장 구현자가 이 조건을 구현한다.
 
-- 조건 미달·이미 획득이면 변경과 보상 없이 현재 snapshot을 반환하며 commit하지 않는다. 개수를 사실마다 증가시키지 않는다.
+- 기존 세 칭호는 조건 미달·이미 획득이면 commit하지 않는다. 동서해 방문은 20절처럼 미완료 진행도 저장하되 보상은 없다.
 - 신규 칭호마다 `TITLE:{titleId}` 유니크 키의 PendingReward 한 건을 제안한다. kind는 TITLE,
   subjectId는 titleId, occurredAtMs·tripId는 AchievementTitle과 동일하다. 이미 확인한 보상을 초기화하지 않는다.
 - 저장 성공 전 메모리 상태를 확정하지 않는다. 조회/저장 실패·취소·revision 충돌은 상위로 전달하며 다음 입력을 멈춘다.
@@ -747,7 +746,7 @@ F-02·F-03·05·12·13·칭호·보상을 같은 DriveChangeSet으로 저장하�
 ## 13. F-07 신규 도로 누적 100km 칭호
 
 이슈 #17은 NEW_ROAD_DISCOVERER 판정을 추가한다. 기존 두 칭호와 F-03 거리 계산은 유지한다.
-UI·TTS·실제 Room·범용 통합 저장과 동서해 칭호는 후속 작업이다.
+UI·TTS·실제 Room·범용 통합 저장은 후속 작업이다. 동서해 칭호의 순수 판정·저장 제안은 20절을 따른다.
 
 ### 완료 사실과 확정 누적
 
@@ -982,3 +981,50 @@ if (fact != null) titles.process(fact)
 - 지표 입력은 Finished 처리 때 소비한다. 이후 신규 거리 갱신·최종 확정은 계산된 metricsDiff를 보존하며 보상을 추가 생성하지 않는다.
   늦은 센서 자료를 같은 sequence로 보내 이미 저장한 결과를 다시 계산하는 API는 아니다. 저장 실패·취소·응답 유실은 기존 재시도 계약을 따른다.
 - 실제 앱은 원본 지표 보존·과거 조회·SDK 비동기 관측 결합을 구현해야 한다. 재생 테스트 성공을 실차 지표 검증으로 기록하지 않는다.
+
+## 20. F-07 동서해 방문 칭호
+
+이슈 #31은 COAST_TO_COAST의 순수 방문 판정과 기존 칭호 저장 제안이다. 실제 지정 지점 catalog·로더·SDK·Room·UI는 구현하지 않는다.
+
+| 타입·API | 계약 |
+| --- | --- |
+| `Coast` | EAST, WEST. 지점 데이터에서 확인한 해안 분류 |
+| `CoastPoint(id, coast, point)` | 고유한 비어 있지 않은 ID와 WGS84 GeoPoint. 이름은 UI용 catalog 항목으로 유지 |
+| `CoastVisitDetector(points).detect(location: ValidatedLocation, tripId: String? = null)` | 지정 반경 안인 원본 방문 근거 List<CoastVisit>. 내부 상태·저장 없음 |
+| `CoastVisit(coastId, coast, atMs, tripId = null)` | 원본 epoch ms·지점 ID·해안·연결 Trip. date는 Asia/Seoul의 ISO 날짜 문자열 |
+| `AchievementFact.CoastEntered(visit)` | 위 검증된 방문 근거를 기존 칭호 UseCase에 전달 |
+| `AchievementProgress.coastVisitsByDate` | Map<String, Map<Coast, CoastVisit>>, 기본 emptyMap. 날짜별 각 해안의 확인된 최초 방문 근거 |
+| `recordCoastVisit(visit)` | 같은 날짜·해안에서 원본 시각이 더 이른 근거만 반영한 불변 진행. 이미 칭호 획득이면 유지 |
+
+```kotlin
+val detector = CoastVisitDetector(coastPoints)
+val titles = ProcessTitleFactUseCase(titleStore, idGenerator)
+detector.detect(approvedLocation, tripId).forEach { visit ->
+    titles.process(AchievementFact.CoastEntered(visit))
+}
+```
+
+- 실제 지정 지점은 현민의 coast-points.json과 채진의 로더가 제공해야 한다. docs/DEMO_AND_DATA.md의 id·coast·point를
+  CoastPoint에 매핑하며 [lon, lat]와 GeoPoint(lat, lon)의 순서를 바꾸지 않는다. radiusM은 명세의 2000과 일치해야 한다.
+  다른 반경을 domain에 조용히 적용하지 않는다. 중복 ID·빈 ID·비정상 좌표는 거절한다. 빈 catalog는 방문 없음이며 임의 대체 지점을 넣지 않는다.
+- 승인 위치의 구면 거리가 2000m 이하이면 그날의 방문 근거를 제안한다. 첫 유효 관측도 포함하며, 반복 관측은 허용하되
+  날짜·해안별 동일/늦은 근거는 UseCase에서 재저장하지 않는다. 수신 공백 사이 선분이나 미승인 위치로 방문을 추정하지 않는다.
+  이 API는 경계 통과 시점을 보간하는 지오펜스 이벤트가 아니다. 실제 관측 시각을 사용하며 도착 속도·시간 경쟁 조건은 없다.
+- 서울 날짜는 원본 atMs를 Asia/Seoul로 변환한다. UTC 날짜·기기 기본 시간대·처리 시각·단조 시각으로 날짜를 정하지 않는다.
+  자정은 다음 날짜에 속한다. 같은 날짜에 EAST와 WEST 각 한 지점이면 방문 순서나 Trip이 달라도 충족한다.
+- 날짜별 각 해안의 최초 근거를 보존한다. 서로 다른 날짜가 섞이거나 사실이 역순 도착해도 날짜를 덮어쓰지 않는다.
+  최초 달성 판단 때 두 근거 중 더 늦은 원본 시각을 acquiredAtMs로, 그 근거의 tripId를 연결한다. 동일 시각이면 EAST 근거를 선택한다.
+  칭호가 이미 확정된 뒤의 늦은 사실로 획득 시각·Trip을 다시 쓰지 않으며 다른 날짜 진행도 추가하지 않는다.
+- 기존 TitleEvaluator는 입력과 저장 진행을 먼저 검증한다. 날짜 키·해안 키가 방문 근거와 다르거나 빈 날짜 진행이면 실패한다.
+  잘못된 저장 근거를 새 사실로 덮어 검증을 피하지 않는다. 순수 evaluate는 제안만 반환하고 진행 저장은 UseCase 책임이다.
+- ProcessTitleFactUseCase는 첫 해안·더 이른 근거도 revision을 증가시켜 저장한다. 이때 titles/rewards는 비어 있다.
+  두 해안을 확인하면 새 진행·COAST_TO_COAST·TITLE:COAST_TO_COAST 보상을 기존 TitleStore.commit 한 번에 저장한다.
+  중복·이미 획득은 commit과 보상 추가가 없다. 다른 세 칭호의 조건 미달 무저장·판정·중복 규칙은 유지한다.
+- 조회/저장 실패·취소·revision 충돌은 전파한다. 같은 사실을 재시도하며, 응답 유실·새 UseCase·재시작에서도 저장된 근거와
+  획득 ID로 중복을 막는다. 실제 앱은 방문 사실을 내구성 있게 재전달하고 기존 DriveChangeSet 통합 트랜잭션 조건을 지켜야 한다.
+- 저장 어댑터는 coastVisitsByDate 전체와 CoastVisit의 원본 시각·해안·지점·Trip을 보존해야 한다. 날짜 키는 ISO 문자열이다.
+  Kotlin 생성자의 기본값은 구버전 JSON/Room의 자동 마이그레이션을 뜻하지 않는다. Gson 등에서 필드가 없는 기존 snapshot은
+  어댑터가 emptyMap으로 명시 복구한 뒤 domain에 전달해야 한다. 팀원 통합 브랜치의 직접 칭호 조립도 첫 방문 진행 저장을 반영해야 한다.
+- Trip 삭제·200m 미만 폐기로 방문 사실이나 이미 받은 칭호를 되돌리지 않는다. 저장 어댑터는 보존 칭호·보상뿐 아니라
+  진행에 든 CoastVisit.tripId도 null로 참조 해제한다. 시각·해안·지점 근거는 유지한다. 전체 삭제에서는 진행·칭호·보상을 함께 초기화한다.
+- 테스트 지점·경로는 합성이다. 실제 catalog의 출처·지정 타당성·로더·기기 동작·Room 마이그레이션은 검증하지 않았다.
