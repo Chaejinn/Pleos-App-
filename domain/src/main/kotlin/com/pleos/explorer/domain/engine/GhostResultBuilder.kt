@@ -9,6 +9,7 @@ import com.pleos.explorer.domain.geo.PathSimplifier
 import com.pleos.explorer.domain.model.DetectionPolicy
 import com.pleos.explorer.domain.model.GeoPoint
 import com.pleos.explorer.domain.model.GhostCursor
+import com.pleos.explorer.domain.model.GhostMetricsInput
 import com.pleos.explorer.domain.model.GhostPassage
 import com.pleos.explorer.domain.model.GhostPassageVisit
 import com.pleos.explorer.domain.model.GhostResult
@@ -26,6 +27,7 @@ class GhostResultBuilder(
     private val simplifier: PathSimplifier = PathSimplifier(),
 ) {
     private val visitMatcher = GhostVisitMatcher()
+    private val metricsComparator = GhostMetricsComparator()
 
     fun requiredGridKeys(segments: List<GhostSegment>): Set<String> = segments.flatMap { segment ->
         segment.sections.flatMap { section ->
@@ -33,7 +35,7 @@ class GhostResultBuilder(
         }
     }.toSet()
 
-    fun build(segment: GhostSegment, history: List<HistoricalTrack>): GhostResult {
+    fun build(segment: GhostSegment, history: List<HistoricalTrack>, metrics: GhostMetricsInput? = null): GhostResult {
         require(segment.id.isNotBlank() && segment.tripId.isNotBlank() && segment.pastTripId.isNotBlank())
         require(segment.tripId != segment.pastTripId && segment.sections.isNotEmpty())
         require(segment.matchedDistanceM.isFinite() && segment.matchedDistanceM >= DetectionPolicy.GHOST_START_DISTANCE_M)
@@ -82,7 +84,8 @@ class GhostResultBuilder(
             PathSegment("$prefix:${segment.id}:$index", simplifier.simplify(points.distinctUntilChanged()))
         }
         return GhostResult(segment.id, segment.tripId, segment.pastTripId, segment.matchedDistanceM,
-            passages.minOf { it.firstPassedAtMs }, passages.maxOf { it.previousLastPassedAtMs }, 0.0, null,
+            passages.minOf { it.firstPassedAtMs }, passages.maxOf { it.previousLastPassedAtMs }, 0.0,
+            metrics?.let { metricsComparator.compare(segment, it, tracks) },
             display(currentPaths, "current"), display(pastPaths, "past"), passages)
     }
 

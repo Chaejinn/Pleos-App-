@@ -1,6 +1,6 @@
 # 공통 데이터·인터페이스 계약
 
-계약 버전: 15 · 소유자: 동현 · Android·Room 구현자: 채진
+계약 버전: 16 · 소유자: 동현 · Android·Room 구현자: 채진
 
 이 문서의 타입·이름·단위는 구현 기준이다. 표의 `?`는 Kotlin nullable, `List<T>`는 불변 목록이다. 아래 시그니처는 구현할 API 규격이며 앱 소스가 아니다.
 
@@ -18,7 +18,8 @@ F-03의 실제 호출·복구·저장 계약은 7절을 따른다.
 이슈 #23에서 F-15 회전·방향지시등 사용률을 구현했다. 원본 신호·좌우 기준·미관측 계약은 16절을 따른다.
 이슈 #25에서 F-15 평균 효율·적산거리 계산을 구현했다. 누적 관측·구간·단위 계약은 17절을 따른다.
 이슈 #27에서 F-15 1km 지표·위치 단절·종료 잔여 구간 집계를 구현했다. 실제 API는 18절을 따른다.
-동서해 칭호·나머지 차량 특성 계산·범용 통합 저장은 후속 구현 규격이다.
+이슈 #29에서 F-13 동일 고스트 범위의 주행 지표 차이를 연결했다. 원본 식별·nullable 비교 계약은 19절을 따른다.
+동서해 칭호·실제 SDK 지표 연결·범용 통합 저장은 후속 구현 규격이다.
 기존 앱은 `legacy` 엔진을 계속 사용하며, 이 계약 추가만으로 새 엔진이 앱에 연결되지는 않는다.
 
 ## 1. 공통 표현
@@ -136,7 +137,7 @@ VehicleSample은 같은 시각의 관측 묶음이다. 서로 다른 시각에 �
 | `AchievementFact` | 구현됨. `BadgeGranted(badgeId, tripId, atMs)`, `GhostFinished(result, atMs)`, `TripFinished(tripId, atMs, newRoadM)`. 11·13절 참조 |
 | `AchievementProgress` | 구현됨. `regionBadgeCount: Int = 0`, `acquiredTitleIds: Set<String> = emptySet()`, `newRoadDistanceM: Double = 0.0`. 신규 거리는 현재 Trip을 포함한 확정 전체 누적 |
 | `TitleQualified` | `titleId`, `tripId`, `acquiredAtMs`, `conditionText` |
-| `TrackPosition` | 구현됨. `tripId`, `pathSegmentId`, `pointId: String?`, `distanceFromTripStartM: Double`, `elapsedMs: Long`. `from(TrackUpdate): TrackPosition?`; 18절 참조 |
+| `TrackPosition` | 구현됨. `tripId`, `pathSegmentId`, `pointId: String?`, `distanceFromTripStartM: Double`, `elapsedMs: Long`, `timeMs: Long? = null`, `point: GeoPoint? = null`, `isPathStart: Boolean? = null`. `from(TrackUpdate): TrackPosition?`; 18·19절 참조 |
 | `ProcessingOutcome` | `Applied`, `Rejected(reason)`, `Failed(error)`; Failed는 저장·데이터 읽기 장애 |
 
 후속 동서해 칭호의 `CoastEntered(coastId, tripId, atMs)`·`coastVisitsByDate`는 아직 구현하지 않았다.
@@ -497,8 +498,8 @@ GhostSegment는 F-13용 원본 대응 구간이며 GhostResult·보상 큐가 �
 
 ## 10. F-13 비교 결과 API와 앱 연결 계약
 
-이슈 #11의 구현은 위치 기반 비교 결과와 저장 제안이다. F-15 원본 지표가 준비되지 않았으므로
-metricsDiff는 null이다. Efficiency·EfficiencyUnit·MetricsDiff 모델 추가가 차량 지표 계산 완료를 뜻하지 않는다.
+이슈 #11의 구현은 위치 기반 비교 결과와 저장 제안이다. 이슈 #29 이전 또는 원본 지표 입력이 없는 호출에서는
+metricsDiff는 null이다. 19절의 선택 입력을 제공하면 확인된 동일 범위의 차량 지표도 비교한다.
 기존 앱·SDK·Room·지도·F-03·05·12 임계값은 보존한다. 실제 보상 큐 표시·TTS·칭호 지급·리플레이는 후속 통합이다.
 
 ### 입력과 호출 순서
@@ -942,3 +943,42 @@ if (fact != null) titles.process(fact)
   빈 입력·한 점·0거리 경로에는 행이 없다. 집계기를 원시 센서 콜백마다 전체 재실행하지 않고 1km 도달·단절·종료 시 호출한다.
 - 새 저장 포트·UseCase·복구 프레임워크·의존성은 없다. 기존 legacy 앱·판정 임계값·효율 계산·적산거리 보조 계산은 보존한다.
   DrivingMetrics는 신규 domain 타입이며 Room Entity·UI 연결·F13 metricsDiff 범위 비교는 이번 구현에 포함되지 않는다.
+
+## 19. F-13 동일 구간 주행 지표 비교
+
+이슈 #29는 Finished의 GhostSegment와 원본 MetricsSample을 연결한다. 새 저장 포트·UseCase·SDK·Room·UI는 추가하지 않는다.
+
+| 타입·API | 계약 |
+| --- | --- |
+| `GhostMetricsInput(current, past)` | 현재 Trip과 F12가 선택한 과거 Trip의 원본 MetricsSample 목록. 각 입력의 판정 결과·관측 시각·F03 경로 정보를 보존 |
+| `GhostComparisonInput(recording, ghost, metrics = null)` | 기존 두 인자 호출 유지. Finished가 포함된 입력에 원본 지표를 선택 제공 |
+| `GhostResultBuilder.build(segment, history, metrics = null)` | 기존 위치·날짜·표시 경로 검증 후 확인된 원본 범위만 비교 |
+| `TrackPosition.timeMs`, `point`, `isPathStart` | 기본 null인 추가 메타데이터. from(TrackUpdate)가 F03 승인 위치의 원본 epoch·좌표·newSegment를 채움 |
+
+- current·past는 각각 해당 Trip 하나의 원본이다. 다른 Trip, 역순, 동시각 충돌, 경로 ID 재사용, 중복 포인트 ID는
+  명시적으로 실패한다. 완전히 같은 연속 재전달은 중복 계산하지 않는다. 같은 경로의 단조 시각·누적 거리를 유지하고
+  경로가 바뀌면 누적 거리를 이어받되 단조 시계 초기화를 허용한다. Trip 시작 0m 이전부터의 목록을 강제하지는 않는다.
+- 범위 안의 원본 관측을 빠짐없이 제공한다. 임의로 일부 표본을 제거한 뒤 새 연속 관측처럼 전달하지 않는다.
+  현재는 모든 대응 section의 원본 단조 시각·epoch·좌표·누적 거리 증가를 확인한다. 시각이 우연히 같은 이전 세션 자료를 고르지 않는다.
+- 과거는 선택된 Trip·pathSegmentId의 실제 cursor 끝점 ID로 양끝을 찾는다. 이미 검증·병합한 과거 이력에서 범위 내부의
+  저장 원본의 ID·epoch·좌표도 지표 목록과 대조한다. 내부 원본이 빠졌는데 남은 간격이 5초 이내라는 이유로 0건으로 확정하지 않는다.
+  이력 조회는 기존 F13의 일괄 조회를 재사용하며 새 범위별 DB 조회를 추가하지 않는다.
+- 과거 경계가 cursor의 fraction 0 또는 1인 실제 원본점이어야 한다. 내부 투영 위치의 소비량·사건은 보간하지 않는다.
+  실제 원본 양끝을 찾지 못하거나 현재 section 전체 중 일부 거리만 인정된 경우 metricsDiff는 null이다.
+  모든 원본점 사이를 재집계하므로 같은 Trip의 서로 다른 1km 행 번호를 비교하지 않는다.
+- 현재 연속 원본과 과거 cursor가 모두 이어진 section은 하나의 범위로 합친다. 단절·미일치 부분은 합산 범위에서 제외한다.
+  범위마다 같은 경로 안의 원본만 사용하며, 같은 원본 경계 사건을 중복 세지 않는다. 경로별 핸들 관측 근거는 한 번 계산해 재사용한다.
+- 사건 경계는 기존 집계와 같다. 일반 범위는 (시작, 끝], isPathStart=true인 원본 경로 첫점의 유효 사건은 포함한다.
+  이 메타데이터가 없는 과거 입력으로 최초 사건 소유권을 추측하지 않는다. 확인되지 않은 범위는 비교하지 않는다.
+- 급제동·급조향은 범위별 기존 판정 started의 합계 차이다. 어느 한 범위에서 해당 지표가 미관측이면 차이도 null이다.
+  방향지시등은 각 주행의 총 signaledTurnCount / 총 turnCount를 계산한 뒤 뺀다. 회전 0건·신호 또는 핸들 미관측이면 null이다.
+- 효율은 범위별 유효 누적 증가량을 검증한 뒤 거리·소비량을 각각 합산해 계산한다. 빠진 공간의 소비량은 포함하지 않는다.
+  한 범위의 소비량 증가가 0이어도 다른 범위와 합친 총소비량이 양수면 계산할 수 있다. 리셋·결측·단위 혼합은 null이다.
+  단위가 서로 다른 두 주행의 효율은 빼지 않는다. 음수 efficiencyDelta는 현재 효율이 더 낮다는 차이 값으로 허용한다.
+- 모든 차이는 현재−과거다. 지원되는 지표만 채우고 모든 항목이 null이면 metricsDiff 자체도 null이다. 기존 위치·날짜·신규 거리 결과는 유지한다.
+- TrackPosition의 신규 필드는 기본 null이므로 기존 생성 코드와 F15 1km 집계는 유지된다. 원본 식별 메타데이터가 없는
+  오래된 입력은 비교 근거로 승격하지 않는다. 어댑터는 from(TrackUpdate) 결과를 사용하고 저장·복구 때 새 필드도 보존해야 한다.
+  보간한 1km 경계를 원본 위치로 채우지 않는다. 새 메타데이터만으로 실제 SDK·Room 연결 완료를 의미하지 않는다.
+- 지표 입력은 Finished 처리 때 소비한다. 이후 신규 거리 갱신·최종 확정은 계산된 metricsDiff를 보존하며 보상을 추가 생성하지 않는다.
+  늦은 센서 자료를 같은 sequence로 보내 이미 저장한 결과를 다시 계산하는 API는 아니다. 저장 실패·취소·응답 유실은 기존 재시도 계약을 따른다.
+- 실제 앱은 원본 지표 보존·과거 조회·SDK 비동기 관측 결합을 구현해야 한다. 재생 테스트 성공을 실차 지표 검증으로 기록하지 않는다.

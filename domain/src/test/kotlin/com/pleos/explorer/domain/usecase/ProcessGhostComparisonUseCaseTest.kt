@@ -4,6 +4,7 @@ import com.pleos.explorer.domain.GhostTestFixtures.NOW_MS
 import com.pleos.explorer.domain.GhostTestFixtures.history
 import com.pleos.explorer.domain.GhostTestFixtures.location
 import com.pleos.explorer.domain.engine.GhostDetector
+import com.pleos.explorer.domain.engine.HarshBrakeDetector
 import com.pleos.explorer.domain.engine.LocationValidator
 import com.pleos.explorer.domain.engine.TrackRecorder
 import com.pleos.explorer.domain.model.ExploredRoad
@@ -12,6 +13,10 @@ import com.pleos.explorer.domain.model.GhostComparisonSnapshot
 import com.pleos.explorer.domain.model.GhostComparisonUpdate
 import com.pleos.explorer.domain.model.GhostCursor
 import com.pleos.explorer.domain.model.GhostInput
+import com.pleos.explorer.domain.model.GhostMetricsInput
+import com.pleos.explorer.domain.model.HarshBrakeState
+import com.pleos.explorer.domain.model.MetricsSample
+import com.pleos.explorer.domain.model.Observation
 import com.pleos.explorer.domain.model.GhostResult
 import com.pleos.explorer.domain.model.GhostSnapshot
 import com.pleos.explorer.domain.model.GhostUpdate
@@ -20,6 +25,7 @@ import com.pleos.explorer.domain.model.LocationSample
 import com.pleos.explorer.domain.model.LocationValidation
 import com.pleos.explorer.domain.model.PendingReward
 import com.pleos.explorer.domain.model.TrackUpdate
+import com.pleos.explorer.domain.model.TrackPosition
 import com.pleos.explorer.domain.model.TripStatus
 import com.pleos.explorer.domain.port.GhostComparisonStore
 import com.pleos.explorer.domain.port.HistoryRepository
@@ -56,6 +62,8 @@ class ProcessGhostComparisonUseCaseTest {
         var ghost = GhostSnapshot("current", "session")
         var sequence = 0L
         var lastInput: GhostComparisonInput? = null
+        var metrics: GhostMetricsInput? = null
+        val positions = mutableListOf<TrackPosition>()
         val useCase = ProcessGhostComparisonUseCase(this, this, IdGenerator { "reward-${++id}" })
 
         suspend fun begin() = useCase.start("current", "session")
@@ -66,6 +74,7 @@ class ProcessGhostComparisonUseCaseTest {
             val known = history.flatMap { it.points }.associate { p -> p.gridKey to
                 ExploredRoad(p.gridKey, "past", 1, 1, 1, historicalNewRoadM) }
             val trackUpdate = recorder.process(recording, validation, sequence, known)
+            TrackPosition.from(trackUpdate)?.let { positions.add(it) }
             val ghostInput = when (validation) {
                 is LocationValidation.Accepted -> GhostInput.Location(validation.location,
                     trackUpdate.connectedDistanceM, trackUpdate.newSegment)
@@ -85,7 +94,7 @@ class ProcessGhostComparisonUseCaseTest {
         suspend fun finish(): GhostComparisonUpdate {
             val trackUpdate = recorder.finish(recording, NOW_MS + sequence * 1_000, emptyList())
             val ghostUpdate = detector.process(ghost, GhostInput.TripEnded, sequence)
-            return process(GhostComparisonInput(trackUpdate, ghostUpdate))
+            return process(GhostComparisonInput(trackUpdate, ghostUpdate, metrics))
         }
         override suspend fun load(tripId: String): GhostComparisonSnapshot? {
             if (failLoad) throw IOException("snapshot failed")
@@ -117,6 +126,51 @@ class ProcessGhostComparisonUseCaseTest {
             update.results.forEach { results[it.id] = it }
             update.rewards.forEach { reward -> check(rewards.putIfAbsent(reward.deduplicationKey, reward) == null) }
             if (loseAck) { loseAck = false; throw IOException("ack lost") }
+        }
+    }
+
+    @Test
+    fun `F03 F12 and metrics share comparison commit retry and reward identity`() = runBlocking {
+        fun brakeSamples(positions: List<TrackPosition>): List<MetricsSample> {
+            val detector = HarshBrakeDetector()
+            var state = HarshBrakeState()
+            return positions.mapIndexed { index, position ->
+                val speed = Observation<Double?>(if (index == 10) 10.0 else 20.0, position.elapsedMs)
+                val update = detector.process(state, speed).also { state = it.state }
+                MetricsSample(position, harshBrake = update)
+            }
+        }
+        for (failure in listOf("commit", "ack", "read")) {
+            val f = Fixture()
+            f.begin()
+            (0..24).forEach { f.move(it * 25.0) }
+            val old = f.history.single().points.mapIndexed { index, point ->
+                TrackPosition(point.tripId, point.pathSegmentId, point.id, index * 25.0, index * 1_000L,
+                    point.timeMs, point.point, index == 0)
+            }
+            f.metrics = GhostMetricsInput(brakeSamples(f.positions), brakeSamples(old))
+            val before = f.state
+            when (failure) {
+                "commit" -> f.failCommit = true
+                "ack" -> f.loseAck = true
+                "read" -> f.failRead = true
+            }
+            assertThrows(IOException::class.java) { runBlocking { f.finish() } }
+            if (failure != "ack") {
+                assertEquals(before, f.state)
+                assertTrue(f.results.isEmpty())
+                assertTrue(f.rewards.isEmpty())
+            }
+            f.failRead = false
+            f.finish()
+            val result = f.results.values.single()
+            assertEquals(0, requireNotNull(result.metricsDiff).harshBrakesDelta)
+            assertNull(result.metricsDiff?.harshSteersDelta)
+            assertTrue(result.finalized)
+            assertEquals(1, f.rewards.size)
+            f.finish()
+            assertEquals(result, f.results.values.single())
+            assertEquals(1, f.rewards.size)
         }
     }
 

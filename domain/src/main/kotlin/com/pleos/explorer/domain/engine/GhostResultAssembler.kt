@@ -54,7 +54,7 @@ class GhostResultAssembler(private val builder: GhostResultBuilder = GhostResult
             val anchor = requireNotNull(active) { "Missing active comparison checkpoint" }
             require(anchor.id == event.segment.id)
             check(pending == null)
-            pending = PendingGhostResult(builder.build(event.segment, history), anchor.lastMatchedNewRoadM)
+            pending = PendingGhostResult(builder.build(event.segment, history, input.metrics), anchor.lastMatchedNewRoadM)
             active = null
         }
         val started = input.ghost.events.filterIsInstance<GhostEvent.Started>().singleOrNull()

@@ -3,6 +3,7 @@ package com.pleos.explorer.domain.engine
 import com.pleos.explorer.domain.model.DetectionPolicy
 import com.pleos.explorer.domain.model.DrivingMetrics
 import com.pleos.explorer.domain.model.Efficiency
+import com.pleos.explorer.domain.model.EfficiencySample
 import com.pleos.explorer.domain.model.MetricsSample
 import com.pleos.explorer.domain.model.TrackPosition
 import com.pleos.explorer.domain.model.TurnSignalUsage
@@ -11,7 +12,7 @@ import kotlin.math.roundToLong
 
 class MetricsCollector(private val calculator: VehicleMetricsCalculator = VehicleMetricsCalculator()) {
     fun collect(samples: List<MetricsSample>, finished: Boolean = false): List<DrivingMetrics> {
-        val ordered = samples.distinctUntilRepeated()
+        val ordered = validate(samples, requireTripStart = true)
         if (ordered.size < 2) return emptyList()
         val rows = mutableListOf<DrivingMetrics>()
         val paths = ordered.groupBy { it.position.pathSegmentId }.values.toList()
@@ -45,14 +46,14 @@ class MetricsCollector(private val calculator: VehicleMetricsCalculator = Vehicl
         return rows.toList()
     }
 
-    private fun List<MetricsSample>.distinctUntilRepeated(): List<MetricsSample> {
+    internal fun validate(samples: List<MetricsSample>, requireTripStart: Boolean): List<MetricsSample> {
         val result = mutableListOf<MetricsSample>()
         val paths = mutableSetOf<String>()
-        for (sample in this) {
+        for (sample in samples) {
             val previous = result.lastOrNull()
             if (sample == previous) continue
             val current = sample.position
-            if (previous == null) require(current.distanceFromTripStartM == 0.0)
+            if (previous == null && requireTripStart) require(current.distanceFromTripStartM == 0.0)
             if (previous != null) {
                 val prior = previous.position
                 require(current.tripId == prior.tripId)
@@ -60,12 +61,25 @@ class MetricsCollector(private val calculator: VehicleMetricsCalculator = Vehicl
                 if (current.pathSegmentId != prior.pathSegmentId) {
                     require(current.pathSegmentId !in paths)
                     require(current.distanceFromTripStartM == prior.distanceFromTripStartM)
-                } else require(current.elapsedMs > prior.elapsedMs)
+                } else {
+                    require(current.elapsedMs > prior.elapsedMs)
+                    require(current.isPathStart != true)
+                }
             }
             paths.add(current.pathSegmentId)
             result.add(sample)
         }
         return result
+    }
+
+    internal fun summarize(
+        path: List<MetricsSample>, fromIndex: Int, toIndex: Int, turnCoverage: Set<Long>,
+    ): DrivingMetrics? {
+        if (fromIndex >= toIndex) return null
+        val start = path[fromIndex].position
+        val end = path[toIndex].position
+        if (end.distanceFromTripStartM <= start.distanceFromTripStartM) return null
+        return aggregate(path.subList(fromIndex, toIndex + 1), start, end, 0, start.isPathStart == true, turnCoverage)
     }
 
     private fun boundary(left: TrackPosition, right: TrackPosition, distanceM: Double): TrackPosition {
@@ -126,7 +140,7 @@ class MetricsCollector(private val calculator: VehicleMetricsCalculator = Vehicl
         distanceFromTripStartM < other.distanceFromTripStartM ||
             distanceFromTripStartM == other.distanceFromTripStartM && elapsedMs < other.elapsedMs
 
-    private fun turnCoverage(path: List<MetricsSample>): Set<Long> {
+    internal fun turnCoverage(path: List<MetricsSample>): Set<Long> {
         fun observed(sample: MetricsSample): Boolean {
             val update = sample.turnSignal ?: return false
             val angle = update.state.angle ?: return false
@@ -154,7 +168,11 @@ class MetricsCollector(private val calculator: VehicleMetricsCalculator = Vehicl
     private fun efficiency(path: List<MetricsSample>, start: TrackPosition, end: TrackPosition): Efficiency? {
         val samples = path.filter { it.position.elapsedMs in start.elapsedMs..end.elapsedMs }
         if (samples.firstOrNull()?.position != start || samples.lastOrNull()?.position != end) return null
-        val readings = samples.map { sample ->
+        return calculator.averageEfficiency(efficiencyReadings(samples) ?: return null)
+    }
+
+    internal fun efficiencyReadings(samples: List<MetricsSample>): List<EfficiencySample>? =
+        samples.map { sample ->
             val reading = sample.efficiency ?: return null
             val position = sample.position
             if (reading.distanceM.observedAtElapsedMs != position.elapsedMs ||
@@ -162,6 +180,4 @@ class MetricsCollector(private val calculator: VehicleMetricsCalculator = Vehicl
                 reading.distanceM.value != position.distanceFromTripStartM) return null
             reading
         }
-        return calculator.averageEfficiency(readings)
-    }
 }

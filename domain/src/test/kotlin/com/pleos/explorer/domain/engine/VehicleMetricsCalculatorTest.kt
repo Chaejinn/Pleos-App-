@@ -9,6 +9,17 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class VehicleMetricsCalculatorTest {
+    @Test
+    fun `separate ranges combine totals without averaging ratios or including gap consumption`() {
+        val ranges = listOf(listOf(sample(0, 0.0, 0.0), sample(1_000, 1_000.0, 0.1)),
+            listOf(sample(20_000, 2_000.0, 50.0), sample(21_000, 11_000.0, 50.3)))
+        assertEquals(25.0, requireNotNull(calculator.combinedEfficiency(ranges)).value, 1e-9)
+        val zeroFirstRange = listOf(ranges[0].map { it.copy(consumption = it.consumption.copy(value = 0.0)) }, ranges[1])
+        assertEquals(100.0 / 3.0, requireNotNull(calculator.combinedEfficiency(zeroFirstRange)).value, 1e-9)
+        assertNull(calculator.combinedEfficiency(emptyList()))
+        assertNull(calculator.combinedEfficiency(listOf(emptyList())))
+    }
+
     private val calculator = VehicleMetricsCalculator()
 
     private fun sample(
