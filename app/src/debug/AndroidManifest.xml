@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-feature android:name="android.hardware.type.automotive" android:required="false" tools:replace="android:required" />
+    <application android:label="로드로그 Demo" tools:replace="android:label">
+        <activity android:name="com.pleos.explorer.presentation.ReportActivity" android:exported="true">
+            <intent-filter tools:node="removeAll" />
+        </activity>
+        <activity android:name="com.pleos.explorer.demo.DemoActivity" android:exported="true"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
