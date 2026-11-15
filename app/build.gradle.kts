@@ -42,6 +42,10 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".demo"
+            versionNameSuffix = "-demo"
+        }
         release {
             isMinifyEnabled = false
             if (releaseProperties.isNotEmpty()) signingConfig = signingConfigs.getByName("localRelease")
